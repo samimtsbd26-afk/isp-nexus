@@ -1,5 +1,5 @@
 import { Queue, Worker } from "bullmq";
-import { getRedis } from "../lib/redis.js";
+import { getBullRedis } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { createDb } from "@isp-nexus/db";
 import { env } from "../lib/env.js";
@@ -9,7 +9,7 @@ import { decryptText } from "../lib/crypto.js";
 import { getMikroTikClient } from "../services/mikrotik/client.js";
 import { sendAlert } from "../services/telegram/bot.js";
 
-const connection = { connection: getRedis() };
+const connection = { connection: getBullRedis() };
 
 export const monitoringQueue = new Queue("monitoring", connection);
 export const alertsQueue = new Queue("alerts", connection);
