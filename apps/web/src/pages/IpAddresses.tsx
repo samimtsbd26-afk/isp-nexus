@@ -3,6 +3,10 @@ import { trpc } from "../lib/trpc";
 import { RefreshCw } from "lucide-react";
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
 
+function isTruthy(val: any) {
+  return val === true || val === "true";
+}
+
 export default function IpAddresses() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
@@ -48,8 +52,8 @@ export default function IpAddresses() {
                     <TableCell className="font-mono text-xs text-muted-foreground">{a.network ?? "—"}</TableCell>
                     <TableCell><Badge variant="outline">{a.interface ?? "—"}</Badge></TableCell>
                     <TableCell>
-                      <Badge variant={a.disabled === "true" ? "destructive" : a.dynamic === "true" ? "warning" : "success"}>
-                        {a.disabled === "true" ? "Disabled" : a.dynamic === "true" ? "Dynamic" : "Static"}
+                      <Badge variant={isTruthy(a.disabled) ? "destructive" : isTruthy(a.dynamic) ? "warning" : "success"}>
+                        {isTruthy(a.disabled) ? "Disabled" : isTruthy(a.dynamic) ? "Dynamic" : "Static"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{a.comment ?? "—"}</TableCell>

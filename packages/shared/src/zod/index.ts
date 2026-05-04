@@ -146,3 +146,28 @@ export const paymentConfigSchema = z.object({
   accountType: z.string().optional(),
   instructions: z.string().optional(),
 });
+
+export const guestOrderSchema = z.object({
+  orgId: z.string().uuid(),
+  packageId: z.string().uuid(),
+  fullName: z.string().min(2).max(255),
+  phone: z.string().min(10).max(20),
+  password: z.string().min(6),
+  paymentMethod: z.enum(["bkash", "nagad", "rocket", "cash", "bank", "free"]),
+  trxId: z.string().optional(),
+  paymentFrom: z.string().optional(),
+  isTrial: z.boolean().default(false),
+});
+
+export const checkOrderSchema = z.object({
+  orderId: z.string().uuid(),
+  phone: z.string().min(10).max(20),
+});
+
+export const trialRegisterSchema = z.object({
+  orgId: z.string().uuid(),
+  packageId: z.string().uuid(),
+  fullName: z.string().min(2).max(255),
+  phone: z.string().min(10).max(20),
+  password: z.string().min(6),
+});

@@ -3,6 +3,10 @@ import { trpc } from "../lib/trpc";
 import { RefreshCw } from "lucide-react";
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
 
+function isTruthy(val: any) {
+  return val === true || val === "true";
+}
+
 type RuleType = "filter" | "nat" | "mangle" | "raw";
 const RULE_TYPES: RuleType[] = ["filter", "nat", "mangle", "raw"];
 
@@ -78,8 +82,8 @@ export default function Firewall() {
                     <TableCell className="font-mono text-xs">{r["dst-port"] ?? "—"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-[160px] truncate">{r.comment ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={r.disabled === "true" ? "destructive" : "success"}>
-                        {r.disabled === "true" ? "Disabled" : "Active"}
+                      <Badge variant={isTruthy(r.disabled) ? "destructive" : "success"}>
+                        {isTruthy(r.disabled) ? "Disabled" : "Active"}
                       </Badge>
                     </TableCell>
                   </TableRow>

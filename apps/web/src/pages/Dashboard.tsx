@@ -3,7 +3,7 @@ import {
   Users, Server, ShoppingCart, TrendingUp, Router,
   Activity, Wifi, Network, AlertTriangle, CheckCircle2,
   XCircle, Clock, Zap, Thermometer, MemoryStick,
-  ArrowUpRight, ArrowDownRight,
+  ArrowUpRight, ArrowDownRight, Shield,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -17,6 +17,14 @@ const DOT_CLASSES = [
   "bg-blue-500", "bg-emerald-500", "bg-amber-500",
   "bg-violet-500", "bg-red-500", "bg-cyan-500",
 ];
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
 
 function RouterHealthCard({ router: r }: {
   router: {
@@ -94,6 +102,17 @@ export default function Dashboard() {
     refetchInterval: 15_000,
   });
   const { data: subsByPkg } = trpc.analytics.subscriptionsByPackage.useQuery();
+
+  // Live MikroTik stats for the first active router
+  const firstRouterId = stats?.routerList?.find((r) => r.isActive)?.id;
+  const {
+    data: liveStats,
+    isLoading: liveLoading,
+    error: liveError,
+  } = trpc.mikrotik.getLiveStats.useQuery(
+    { routerId: firstRouterId! },
+    { enabled: !!firstRouterId, refetchInterval: 10_000 }
+  );
 
   const v = (n: number | undefined) => (isLoading ? "—" : (n ?? 0).toLocaleString());
 
@@ -181,6 +200,104 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* MikroTik Live Stats */}
+      {firstRouterId && liveLoading && (
+        <div className="rounded-xl border border-border bg-card p-6 text-center text-muted-foreground text-sm">
+          <Activity size={20} className="mx-auto mb-2 animate-spin text-primary" />
+          Loading MikroTik live data…
+        </div>
+      )}
+      {firstRouterId && liveError && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4 flex items-center gap-3">
+          <AlertTriangle size={18} className="text-red-400 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-red-300">MikroTik connection failed</p>
+            <p className="text-xs text-muted-foreground">
+              Could not fetch live data. Check router connectivity in <Link to="/routers" className="underline">Routers</Link>.
+            </p>
+          </div>
+        </div>
+      )}
+      {!firstRouterId && !isLoading && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 flex items-center gap-3">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-300">No active router</p>
+            <p className="text-xs text-muted-foreground">
+              Add and connect a MikroTik router to see live data. <Link to="/routers" className="underline">Add Router →</Link>
+            </p>
+          </div>
+        </div>
+      )}
+      {liveStats && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold">MikroTik Live — {liveStats.identity}</h2>
+              <p className="text-muted-foreground text-xs">ROS {liveStats.rosVersion ?? "—"} · {liveStats.model ?? "—"} · Uptime {liveStats.uptime ?? "—"}</p>
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live · auto-refresh 10s
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+            {[
+              { label: "PPPoE Active", value: liveStats.activePppoeCount, icon: Network, color: "text-blue-400", bg: "bg-blue-500/10" },
+              { label: "Hotspot Active", value: liveStats.activeHotspotCount, icon: Wifi, color: "text-amber-400", bg: "bg-amber-500/10" },
+              { label: "CPU Load", value: liveStats.cpuLoad != null ? `${liveStats.cpuLoad}%` : "—", icon: Activity, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+              { label: "Memory", value: liveStats.totalMemoryMb ? `${Math.round(((liveStats.totalMemoryMb - (liveStats.freeMemoryMb ?? 0)) / liveStats.totalMemoryMb) * 100)}%` : "—", icon: MemoryStick, color: "text-purple-400", bg: "bg-purple-500/10" },
+              { label: "Interfaces", value: `${liveStats.runningInterfaceCount}/${liveStats.interfaceCount}`, icon: Router, color: "text-cyan-400", bg: "bg-cyan-500/10" },
+              { label: "Queues", value: liveStats.queueCount, icon: Zap, color: "text-pink-400", bg: "bg-pink-500/10" },
+              { label: "Firewall", value: liveStats.firewallRuleCount, icon: Shield, color: "text-red-400", bg: "bg-red-500/10" },
+              { label: "Routes", value: liveStats.routeCount, icon: TrendingUp, color: "text-violet-400", bg: "bg-violet-500/10" },
+            ].map(({ label, value, icon: Icon, color, bg }) => (
+              <div key={label} className="rounded-xl border border-border bg-card p-3 flex flex-col items-center gap-1.5 text-center">
+                <div className={`p-1.5 rounded-lg ${bg}`}>
+                  <Icon size={14} className={color} />
+                </div>
+                <p className="text-lg font-bold">{value ?? "—"}</p>
+                <p className="text-[10px] text-muted-foreground">{label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Interface traffic mini table */}
+          {liveStats.interfaces && liveStats.interfaces.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Active Interfaces — Traffic</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left px-4 py-2 text-xs text-muted-foreground font-medium">Interface</th>
+                        <th className="text-left px-4 py-2 text-xs text-muted-foreground font-medium">Type</th>
+                        <th className="text-right px-4 py-2 text-xs text-muted-foreground font-medium">RX</th>
+                        <th className="text-right px-4 py-2 text-xs text-muted-foreground font-medium">TX</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liveStats.interfaces.map((iface: any) => (
+                        <tr key={iface.name} className="border-b border-border last:border-0">
+                          <td className="px-4 py-2 font-mono text-xs font-medium">{iface.name}</td>
+                          <td className="px-4 py-2"><Badge variant="outline">{iface.type}</Badge></td>
+                          <td className="px-4 py-2 text-right text-emerald-400 font-medium text-xs">{formatBytes(iface.rxByte)}</td>
+                          <td className="px-4 py-2 text-right text-blue-400 font-medium text-xs">{formatBytes(iface.txByte)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* Revenue Chart + Routers */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

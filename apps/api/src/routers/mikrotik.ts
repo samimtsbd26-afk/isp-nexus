@@ -11,7 +11,8 @@ async function getRouterClient(db: any, orgId: string, routerId: string): Promis
     .where(and(eq(routers.id, routerId), eq(routers.orgId, orgId))).limit(1);
   if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
   const password = decryptText(r.passwordEncrypted);
-  return getMikroTikClient({ host: r.host, port: r.port, username: r.username, password, useSsl: r.useSsl });
+  const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
+  return getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
 }
 
 const routerIdInput = z.object({ routerId: z.string().uuid() });
@@ -176,7 +177,7 @@ export const mikrotikRouter = router({
 
   getSystemLogs: authedProcedure.input(z.object({ routerId: z.string().uuid(), limit: z.number().default(100) })).query(async ({ ctx, input }) => {
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
-    try { return await client.print("/log"); }
+    try { return (await client.print("/log")).slice(0, input.limit); }
     finally { await client.close(); }
   }),
 
@@ -239,7 +240,7 @@ export const mikrotikRouter = router({
   ping: authedProcedure.input(z.object({ routerId: z.string().uuid(), address: z.string(), count: z.number().default(4) })).mutation(async ({ ctx, input }) => {
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
     try {
-      return await client.exec("/", "ping", { address: input.address, count: String(input.count) });
+      return await client.exec("/tool", "ping", { address: input.address, count: String(input.count) });
     } finally { await client.close(); }
   }),
 
@@ -259,5 +260,49 @@ export const mikrotikRouter = router({
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
     try { return await client.print("/ppp/profile"); }
     finally { await client.close(); }
+  }),
+
+  getLiveStats: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try {
+      const [identity] = await client.print("/system/identity");
+      const [resource] = await client.print("/system/resource");
+      const interfaces = await client.print("/interface");
+      const activePppoe = await client.print("/ppp/active");
+      const activeHotspot = await client.print("/ip/hotspot/active");
+      const queues = await client.print("/queue/simple");
+      const firewallFilter = await client.print("/ip/firewall/filter");
+      const routes = await client.print("/ip/route");
+
+      const runningIfaces = interfaces.filter((i: any) => i.running === "true" || i.running === true);
+
+      return {
+        identity: identity?.name ?? "Unknown",
+        model: resource?.boardName ?? null,
+        rosVersion: resource?.version ?? null,
+        uptime: resource?.uptime ?? null,
+        cpuLoad: resource?.cpuLoad ? Number(resource.cpuLoad) : null,
+        totalMemoryMb: resource?.totalMemory ? Math.round(Number(resource.totalMemory) / 1024 / 1024) : null,
+        freeMemoryMb: resource?.freeMemory ? Math.round(Number(resource.freeMemory) / 1024 / 1024) : null,
+        totalHddSpaceMb: resource?.totalHddSpace ? Math.round(Number(resource.totalHddSpace) / 1024 / 1024) : null,
+        freeHddSpaceMb: resource?.freeHddSpace ? Math.round(Number(resource.freeHddSpace) / 1024 / 1024) : null,
+        architectureName: resource?.architectureName ?? null,
+        cpuCount: resource?.cpuCount ? Number(resource.cpuCount) : null,
+        cpuFrequency: resource?.cpuFrequency ? Number(resource.cpuFrequency) : null,
+        interfaceCount: interfaces.length,
+        runningInterfaceCount: runningIfaces.length,
+        activePppoeCount: activePppoe.length,
+        activeHotspotCount: activeHotspot.length,
+        queueCount: queues.length,
+        firewallRuleCount: firewallFilter.length,
+        routeCount: routes.length,
+        interfaces: runningIfaces.slice(0, 10).map((i: any) => ({
+          name: i.name,
+          type: i.type ?? "ether",
+          rxByte: i.rxByte ? Number(i.rxByte) : 0,
+          txByte: i.txByte ? Number(i.txByte) : 0,
+        })),
+      };
+    } finally { await client.close(); }
   }),
 });

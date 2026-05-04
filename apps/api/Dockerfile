@@ -8,6 +8,10 @@ COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
 COPY apps/portal/package.json ./apps/portal/
 RUN pnpm install --no-frozen-lockfile
+# Patch node-routeros to handle MikroTik v7 !empty reply
+RUN node -e "const fs=require('fs'); const p='/app/node_modules/.pnpm/node-routeros@1.6.9/node_modules/node-routeros/dist/Channel.js'; let c=fs.readFileSync(p,'utf8'); const o=\"            case '!done':\\n                if (!this.trapped)\\n                    this.emit('done', this.data);\\n                this.close();\\n                break;\\n            default:\"; const n=\"            case '!done':\\n                if (!this.trapped)\\n                    this.emit('done', this.data);\\n                this.close();\\n                break;\\n            case '!empty':\\n                // MikroTik v7 sends !empty before !done for empty responses - ignore\\n                break;\\n            default:\"; if(c.includes(o)){ c=c.replace(o,n); fs.writeFileSync(p,c); console.log('patched'); } else { console.log('patch skip'); }"
+# Patch Receiver to ignore data for already-closed tags (prevents UNREGISTEREDTAG crash)
+RUN node -e "const fs=require('fs'); const p='/app/node_modules/.pnpm/node-routeros@1.6.9/node_modules/node-routeros/dist/connector/Receiver.js'; let c=fs.readFileSync(p,'utf8'); const o='        else {\\n            throw new RosException_1.RosException(\\'UNREGISTEREDTAG\\');\\n        }'; const n='        else {\\n            // Ignore data for already-closed tags\\n            return;\\n        }'; if(c.includes(o)){ c=c.replace(o,n); fs.writeFileSync(p,c); console.log('patched receiver'); } else { console.log('patch skip receiver'); }"
 
 FROM node:22-alpine AS runner
 RUN npm install -g tsx && addgroup -S appgroup && adduser -S appuser -G appgroup

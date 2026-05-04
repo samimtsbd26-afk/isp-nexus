@@ -40,8 +40,11 @@ export const supportRouter = router({
   sendMessage: authedProcedure
     .input(z.object({ ticketId: z.string().uuid(), message: z.string().min(1), senderType: z.enum(["admin", "customer"]) }))
     .mutation(async ({ ctx, input }) => {
+      const [ticket] = await ctx.db.select({ id: supportTickets.id }).from(supportTickets)
+        .where(and(eq(supportTickets.id, input.ticketId), eq(supportTickets.orgId, ctx.orgId))).limit(1);
+      if (!ticket) throw new TRPCError({ code: "NOT_FOUND", message: "Ticket not found" });
       await ctx.db.insert(supportMessages).values({
-        ticketId: input.ticketId, senderType: input.senderType,
+        ticketId: input.ticketId, senderType: "admin",
         senderId: ctx.user.id, message: input.message,
       });
       await ctx.db.update(supportTickets).set({ updatedAt: new Date() })

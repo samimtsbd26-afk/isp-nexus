@@ -30,6 +30,14 @@ import { logger } from "./lib/logger.js";
 import { initBot, stopBot } from "./services/telegram/bot.js";
 import { startMonitoringWorker, startAlertsWorker, scheduleJobs } from "./jobs/queue.js";
 
+// Safety net: prevent node-routeros !empty crash from killing the whole API process
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "Uncaught exception — keeping process alive");
+});
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason }, "Unhandled rejection — keeping process alive");
+});
+
 const app = new Hono();
 
 app.use("*", secureHeaders());

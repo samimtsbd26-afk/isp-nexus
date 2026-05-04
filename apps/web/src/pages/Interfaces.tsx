@@ -4,6 +4,10 @@ import { RefreshCw } from "lucide-react";
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
 import { formatBytes } from "../lib/utils";
 
+function isActive(val: any) {
+  return val === true || val === "true";
+}
+
 export default function Interfaces() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
@@ -48,7 +52,7 @@ export default function Interfaces() {
                 {ifaces.map((i: any) => (
                   <TableRow key={i[".id"] ?? i.name}>
                     <TableCell>
-                      <div className={`w-2 h-2 rounded-full ${i.running === "true" ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <div className={`w-2 h-2 rounded-full ${isActive(i.running) ? "bg-emerald-400" : "bg-red-400"}`} />
                     </TableCell>
                     <TableCell className="font-mono text-sm font-medium">{i.name}</TableCell>
                     <TableCell><Badge variant="outline">{i.type ?? "ether"}</Badge></TableCell>

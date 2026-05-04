@@ -45,7 +45,7 @@ export async function getMikroTikClient(config: RouterConfig): Promise<MikroTikA
     user: config.username,
     password: config.password,
     port: config.port,
-    keepalive: true,
+    keepalive: false,
     timeout: config.timeout ?? 5000,
     tls: config.useSsl ? { rejectUnauthorized: false } : undefined,
   });

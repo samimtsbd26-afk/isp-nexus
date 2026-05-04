@@ -29,6 +29,16 @@ export const subscriptionRouter = router({
   }),
 
   create: adminProcedure.input(createSubscriptionSchema).mutation(async ({ ctx, input }) => {
+    const [customer] = await ctx.db.select({ id: customers.id }).from(customers)
+      .where(and(eq(customers.id, input.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
+    if (!customer) throw new TRPCError({ code: "NOT_FOUND", message: "Customer not found" });
+    const [pkg] = await ctx.db.select().from(packages)
+      .where(and(eq(packages.id, input.packageId), eq(packages.orgId, ctx.orgId))).limit(1);
+    if (!pkg) throw new TRPCError({ code: "NOT_FOUND", message: "Package not found" });
+    const [r] = await ctx.db.select().from(routers)
+      .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
+    if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
+
     const passwordEncrypted = encryptText(input.password);
     const [s] = await ctx.db.insert(subscriptions).values({
       orgId: ctx.orgId, customerId: input.customerId, packageId: input.packageId,
@@ -37,8 +47,6 @@ export const subscriptionRouter = router({
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     }).returning();
 
-    const [pkg] = await ctx.db.select().from(packages).where(eq(packages.id, input.packageId)).limit(1);
-    const [r] = await ctx.db.select().from(routers).where(eq(routers.id, input.routerId)).limit(1);
     if (r && pkg) {
       const password = decryptText(r.passwordEncrypted);
       try {

@@ -3,6 +3,10 @@ import { trpc } from "../lib/trpc";
 import { RefreshCw } from "lucide-react";
 import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
 
+function isTruthy(val: any) {
+  return val === true || val === "true";
+}
+
 export default function Routes() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
@@ -51,9 +55,9 @@ export default function Routes() {
                     <TableCell className="text-sm text-muted-foreground">{r.distance ?? "—"}</TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        {r.active === "true" && <Badge variant="success">Active</Badge>}
-                        {r.dynamic === "true" && <Badge variant="warning">Dynamic</Badge>}
-                        {r.disabled === "true" && <Badge variant="destructive">Disabled</Badge>}
+                        {isTruthy(r.active) && <Badge variant="success">Active</Badge>}
+                        {isTruthy(r.dynamic) && <Badge variant="warning">Dynamic</Badge>}
+                        {isTruthy(r.disabled) && <Badge variant="destructive">Disabled</Badge>}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-[140px] truncate">{r.comment ?? "—"}</TableCell>

@@ -146,7 +146,7 @@ export default function Routers() {
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" className="accent-blue-500" checked={form.useSsl}
                 onChange={(e) => setForm({ ...form, useSsl: e.target.checked })} />
-              Use SSL (port 8729)
+              Use SSL
             </label>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" className="accent-blue-500" checked={form.isDefault}

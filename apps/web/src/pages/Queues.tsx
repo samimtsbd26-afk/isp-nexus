@@ -6,6 +6,10 @@ import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableR
 
 const EMPTY = { name: "", target: "", maxLimit: "10M/10M", comment: "" };
 
+function isTruthy(val: any) {
+  return val === true || val === "true";
+}
+
 export default function Queues() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
@@ -63,8 +67,8 @@ export default function Queues() {
                     <TableCell><Badge variant="outline">{q["max-limit"] ?? "—"}</Badge></TableCell>
                     <TableCell className="text-xs text-muted-foreground">{q.bytes ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant={q.disabled === "true" ? "destructive" : "success"}>
-                        {q.disabled === "true" ? "Disabled" : "Active"}
+                      <Badge variant={isTruthy(q.disabled) ? "destructive" : "success"}>
+                        {isTruthy(q.disabled) ? "Disabled" : "Active"}
                       </Badge>
                     </TableCell>
                     <TableCell>

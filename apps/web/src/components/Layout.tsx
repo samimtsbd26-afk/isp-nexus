@@ -134,7 +134,15 @@ export default function Layout() {
 
   const { data: me } = trpc.auth.me.useQuery();
   const logout = trpc.auth.logout.useMutation({
-    onSuccess: () => { localStorage.removeItem("isp_access_token"); navigate("/login"); },
+    onSuccess: () => {
+      localStorage.removeItem("isp_access_token");
+      window.location.href = "/login";
+    },
+    onError: () => {
+      // Even if API fails, clear local token and force reload
+      localStorage.removeItem("isp_access_token");
+      window.location.href = "/login";
+    },
   });
 
   return (

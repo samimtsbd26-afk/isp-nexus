@@ -6,7 +6,7 @@ import { users, organizations, refreshTokens } from "@isp-nexus/db";
 import { hashPassword, verifyPassword } from "../lib/crypto.js";
 import {
   signAccessToken, signPortalToken, generateRefreshToken, hashRefreshToken,
-  buildSessionCookie, clearSessionCookie,
+  buildSessionCookie, buildAccessCookie, clearSessionCookie, clearAccessCookie,
 } from "../auth/session.js";
 import { loginSchema, registerSchema, changePasswordSchema } from "@isp-nexus/shared";
 import { env } from "../lib/env.js";
@@ -45,7 +45,9 @@ export const authRouter = router({
     const tokenHash = hashRefreshToken(refreshToken);
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     await ctx.db.insert(refreshTokens).values({ userId: user.id, tokenHash, expiresAt });
-    ctx.resHeaders.set("Set-Cookie", buildSessionCookie(refreshToken, env.NODE_ENV === "production"));
+    const secure = env.NODE_ENV === "production";
+    ctx.setHeader("Set-Cookie", buildAccessCookie(accessToken, secure));
+    ctx.setHeader("Set-Cookie", buildSessionCookie(refreshToken, secure));
     return { accessToken, user: { id: user.id, name: user.name, email: user.email, role: user.role, orgId: user.orgId } };
   }),
 
@@ -66,7 +68,9 @@ export const authRouter = router({
     const newHash = hashRefreshToken(newRefreshToken);
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     await ctx.db.insert(refreshTokens).values({ userId: user.id, tokenHash: newHash, expiresAt });
-    ctx.resHeaders.set("Set-Cookie", buildSessionCookie(newRefreshToken, env.NODE_ENV === "production"));
+    const secure = env.NODE_ENV === "production";
+    ctx.setHeader("Set-Cookie", buildAccessCookie(accessToken, secure));
+    ctx.setHeader("Set-Cookie", buildSessionCookie(newRefreshToken, secure));
     return { accessToken };
   }),
 
@@ -77,7 +81,8 @@ export const authRouter = router({
       const tokenHash = hashRefreshToken(match[1]);
       await ctx.db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.tokenHash, tokenHash));
     }
-    ctx.resHeaders.set("Set-Cookie", clearSessionCookie());
+    ctx.setHeader("Set-Cookie", clearAccessCookie());
+    ctx.setHeader("Set-Cookie", clearSessionCookie());
     return { ok: true };
   }),
 
@@ -114,7 +119,8 @@ export const authRouter = router({
     .input(z.object({ id: z.string().uuid(), name: z.string().min(2).optional(), role: z.enum(["superadmin","admin","reseller","viewer"]).optional(), isActive: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
-      await ctx.db.update(users).set({ ...data, updatedAt: new Date() }).where(eq(users.id, id));
+      await ctx.db.update(users).set({ ...data, updatedAt: new Date() })
+        .where(and(eq(users.id, id), eq(users.orgId, ctx.orgId)));
       return { ok: true };
     }),
 
@@ -122,13 +128,14 @@ export const authRouter = router({
     .input(z.object({ id: z.string().uuid(), newPassword: z.string().min(8) }))
     .mutation(async ({ ctx, input }) => {
       const passwordHash = await hashPassword(input.newPassword);
-      await ctx.db.update(users).set({ passwordHash }).where(eq(users.id, input.id));
+      await ctx.db.update(users).set({ passwordHash })
+        .where(and(eq(users.id, input.id), eq(users.orgId, ctx.orgId)));
       return { ok: true };
     }),
 
   deleteUser: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
     if (input.id === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "Cannot delete yourself" });
-    await ctx.db.delete(users).where(eq(users.id, input.id));
+    await ctx.db.delete(users).where(and(eq(users.id, input.id), eq(users.orgId, ctx.orgId)));
     return { ok: true };
   }),
 });

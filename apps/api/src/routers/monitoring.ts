@@ -1,13 +1,21 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { resourceSnapshots, bandwidthSnapshots, pingSnapshots, sfpSnapshots, pingTargets } from "@isp-nexus/db";
+import { resourceSnapshots, bandwidthSnapshots, pingSnapshots, sfpSnapshots, pingTargets, routers } from "@isp-nexus/db";
 import { pingTargetSchema } from "@isp-nexus/shared";
+
+async function assertRouterAccess(ctx: { db: any; orgId: string }, routerId: string): Promise<void> {
+  const [router] = await ctx.db.select({ id: routers.id }).from(routers)
+    .where(and(eq(routers.id, routerId), eq(routers.orgId, ctx.orgId))).limit(1);
+  if (!router) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
+}
 
 export const monitoringRouter = router({
   getResourceSnapshots: authedProcedure
     .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
     .query(async ({ ctx, input }) => {
+      await assertRouterAccess(ctx, input.routerId);
       const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
       return ctx.db.select().from(resourceSnapshots)
         .where(and(eq(resourceSnapshots.routerId, input.routerId), gte(resourceSnapshots.capturedAt, since)))
@@ -17,6 +25,7 @@ export const monitoringRouter = router({
   getBandwidthSnapshots: authedProcedure
     .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
     .query(async ({ ctx, input }) => {
+      await assertRouterAccess(ctx, input.routerId);
       const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
       return ctx.db.select().from(bandwidthSnapshots)
         .where(and(eq(bandwidthSnapshots.routerId, input.routerId), gte(bandwidthSnapshots.capturedAt, since)))
@@ -26,6 +35,7 @@ export const monitoringRouter = router({
   getPingSnapshots: authedProcedure
     .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
     .query(async ({ ctx, input }) => {
+      await assertRouterAccess(ctx, input.routerId);
       const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
       return ctx.db.select().from(pingSnapshots)
         .where(and(eq(pingSnapshots.routerId, input.routerId), gte(pingSnapshots.capturedAt, since)))
@@ -35,6 +45,7 @@ export const monitoringRouter = router({
   getSfpSnapshots: authedProcedure
     .input(z.object({ routerId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
+      await assertRouterAccess(ctx, input.routerId);
       return ctx.db.select().from(sfpSnapshots)
         .where(eq(sfpSnapshots.routerId, input.routerId))
         .orderBy(desc(sfpSnapshots.capturedAt)).limit(100);
@@ -48,6 +59,7 @@ export const monitoringRouter = router({
     }),
 
   createPingTarget: adminProcedure.input(pingTargetSchema).mutation(async ({ ctx, input }) => {
+    await assertRouterAccess(ctx, input.routerId);
     const [t] = await ctx.db.insert(pingTargets).values({ orgId: ctx.orgId, ...input }).returning();
     return t;
   }),

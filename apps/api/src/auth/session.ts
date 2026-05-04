@@ -53,6 +53,15 @@ export function buildSessionCookie(refreshToken: string, secure: boolean = true)
   return `isp_refresh=${refreshToken}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Strict${secure ? "; Secure" : ""}`;
 }
 
+export function buildAccessCookie(accessToken: string, secure: boolean = true): string {
+  const maxAge = 15 * 60;
+  return `isp_access=${accessToken}; HttpOnly; Path=/; Max-Age=${maxAge}; SameSite=Strict${secure ? "; Secure" : ""}`;
+}
+
 export function clearSessionCookie(): string {
   return "isp_refresh=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict";
+}
+
+export function clearAccessCookie(): string {
+  return "isp_access=; HttpOnly; Path=/; Max-Age=0; SameSite=Strict";
 }

@@ -42,3 +42,31 @@ export async function sendAlert(chatId: string, message: string): Promise<void> 
   try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.error({ err, chatId }, "Failed to send Telegram alert"); }
 }
+
+export async function sendOrderNotification(chatId: string, order: any, customer: any, pkg: any): Promise<void> {
+  if (!botInstance) return;
+  const message = [
+    `🛒 *New Order*`,
+    ``,
+    `Package: ${pkg?.name ?? "N/A"}`,
+    `Amount: ${order?.amountBdt ?? 0} BDT`,
+    `Method: ${order?.paymentMethod ?? "N/A"}`,
+    `Customer: ${customer?.fullName ?? "N/A"}`,
+    `Phone: ${customer?.phone ?? "N/A"}`,
+  ].join("\n");
+  try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
+  catch (err) { logger.error({ err, chatId }, "Failed to send order notification"); }
+}
+
+export async function sendApprovalNotification(chatId: string, customer: any, pkg: any): Promise<void> {
+  if (!botInstance) return;
+  const message = [
+    `✅ *Order Approved*`,
+    ``,
+    `Customer: ${customer?.fullName ?? "N/A"}`,
+    `Phone: ${customer?.phone ?? "N/A"}`,
+    `Package: ${pkg?.name ?? "N/A"}`,
+  ].join("\n");
+  try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
+  catch (err) { logger.error({ err, chatId }, "Failed to send approval notification"); }
+}

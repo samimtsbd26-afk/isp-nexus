@@ -30,6 +30,9 @@ export const routerMgmtRouter = router({
 
   create: adminProcedure.input(createRouterSchema).mutation(async ({ ctx, input }) => {
     const passwordEncrypted = encryptText(input.password);
+    if (input.isDefault) {
+      await ctx.db.update(routers).set({ isDefault: false }).where(eq(routers.orgId, ctx.orgId));
+    }
     const [r] = await ctx.db.insert(routers).values({
       orgId: ctx.orgId, name: input.name, host: input.host,
       port: input.port, sslPort: input.sslPort, username: input.username,
@@ -53,6 +56,9 @@ export const routerMgmtRouter = router({
       const { id, password, ...rest } = input;
       const data: Record<string, unknown> = { ...rest, updatedAt: new Date() };
       if (password) data.passwordEncrypted = encryptText(password);
+      if (input.isDefault) {
+        await ctx.db.update(routers).set({ isDefault: false }).where(eq(routers.orgId, ctx.orgId));
+      }
       await ctx.db.update(routers).set(data).where(and(eq(routers.id, id), eq(routers.orgId, ctx.orgId)));
       return { ok: true };
     }),
@@ -67,8 +73,9 @@ export const routerMgmtRouter = router({
       .where(and(eq(routers.id, input.id), eq(routers.orgId, ctx.orgId))).limit(1);
     if (!r) throw new TRPCError({ code: "NOT_FOUND" });
     const password = decryptText(r.passwordEncrypted);
+    const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
     try {
-      const client = await getMikroTikClient({ host: r.host, port: r.port, username: r.username, password, useSsl: r.useSsl });
+      const client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
       const identity = await client.print("/system/identity");
       await client.close();
       return { ok: true, identity: identity[0]?.name ?? "unknown" };

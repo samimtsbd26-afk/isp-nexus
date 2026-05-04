@@ -21,7 +21,8 @@ export function startMonitoringWorker(): Worker {
     for (const r of allRouters) {
       try {
         const password = decryptText(r.passwordEncrypted);
-        const client = await getMikroTikClient({ host: r.host, port: r.port, username: r.username, password, useSsl: r.useSsl });
+        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
+        const client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
         const [res] = await client.print("/system/resource");
         const [health] = await client.print("/system/health");
         const interfaces = await client.exec("/interface", "monitor-traffic", { interface: "all", once: "" });
