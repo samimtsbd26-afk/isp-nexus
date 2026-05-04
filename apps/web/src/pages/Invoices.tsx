@@ -7,22 +7,22 @@ import { Card, CardContent, Button, Badge, Table, TableHeader, TableBody, TableR
 export default function Invoices() {
   const { data, refetch, isLoading } = trpc.invoice.list.useQuery();
   const [downloading, setDownloading] = useState<string | null>(null);
-  const getPdf = trpc.invoice.generatePdf.useQuery(
-    { id: downloading ?? "" },
-    { enabled: false }
-  );
 
   async function downloadPdf(id: string) {
     setDownloading(id);
     try {
-      const result = await getPdf.refetch();
-      const data = result.data;
-      if (!data) { toast.error("Failed to generate PDF"); return; }
-      const blob = new Blob([Uint8Array.from(atob(data.base64), (c) => c.codePointAt(0) ?? 0)], { type: "application/pdf" });
+      const input = encodeURIComponent(JSON.stringify({ json: { id } }));
+      const response = await fetch(`/api/trpc/invoice.generatePdf?input=${input}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("isp_access_token")}` },
+      });
+      const result = await response.json();
+      const pdf = result?.result?.data?.json;
+      if (!response.ok || !pdf?.base64) { toast.error("Failed to generate PDF"); return; }
+      const blob = new Blob([Uint8Array.from(atob(pdf.base64), (c) => c.codePointAt(0) ?? 0)], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = data.filename;
+      a.download = pdf.filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch { toast.error("PDF download failed"); }

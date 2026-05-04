@@ -45,7 +45,7 @@ export async function createContext(c: Context): Promise<TRPCContext> {
         .from(users)
         .where(eq(users.id, payload.userId))
         .limit(1);
-      if (found[0]?.isActive) {
+      if (found[0]?.isActive && found[0].orgId === payload.orgId) {
         user = found[0];
         orgId = found[0].orgId;
       }

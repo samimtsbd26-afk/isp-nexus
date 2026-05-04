@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment - Skynity ISP</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .payment-methods {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .pay-method {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px;
+            min-height: 64px;
+            padding: 9px 5px;
+            text-align: center;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .pay-method:hover {
+            border-color: var(--cyan);
+            background: rgba(0, 243, 255, 0.1);
+        }
+        .pay-method.active {
+            border-color: var(--cyan);
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.2) inset;
+        }
+        .pay-method img {
+            max-width: 100%;
+            height: 40px;
+            object-fit: contain;
+            margin-bottom: 5px;
+        }
+        .pay-method span {
+            display: block;
+            font-size: 0.72rem;
+            color: white;
+        }
+        .pay-brand {
+            min-height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 1rem;
+            margin-bottom: 4px;
+        }
+        .pay-instruction {
+            border: 1px solid rgba(0, 243, 255, 0.24);
+            border-radius: 10px;
+            padding: 12px;
+            margin-bottom: 14px;
+            background: rgba(0, 243, 255, 0.06);
+            text-align: center;
+        }
+        .pay-instruction strong {
+            display: block;
+            margin-top: 5px;
+            color: var(--cyan);
+            font-size: 1.1rem;
+        }
+        .package-summary {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px dashed var(--cyan);
+        }
+        .package-summary h3 {
+            color: var(--cyan);
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+        }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            color: #cbd5e1;
+        }
+        .summary-total {
+            border-top: 1px solid var(--glass-border);
+            margin-top: 10px;
+            padding-top: 10px;
+            font-weight: bold;
+            color: white;
+            font-size: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-stars"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <a href="login.html" class="icon-btn" title="Back">
+                ←
+            </a>
+            <a href="login.html" class="logo">
+                <h1>SKYNITY</h1>
+                <p>POWERED BY STARLINK</p>
+            </a>
+        </header>
+
+        <div class="auth-box">
+            <h2 data-en="Select Payment" data-bn="পেমেন্ট নির্বাচন করুন">Select Payment</h2>
+
+            <div class="package-summary">
+                <h3 data-en="Package Details" data-bn="প্যাকেজ তথ্য">Package Details</h3>
+                <div class="summary-row"><span data-en="Plan:" data-bn="প্ল্যান:">Plan:</span> <span id="pkgName">Loading...</span></div>
+                <div class="summary-row"><span data-en="Validity:" data-bn="মেয়াদ:">Validity:</span> <span id="pkgValidity">-</span></div>
+                <div class="summary-row summary-total"><span data-en="Total Amount:" data-bn="মোট টাকা:">Total Amount:</span> <span id="pkgPrice">- BDT</span></div>
+            </div>
+
+            <div class="pay-instruction">
+                <span data-en="Send Money only via bKash / Nagad / Rocket" data-bn="bKash / Nagad / Rocket এ Send Money করুন">Send Money only via bKash / Nagad / Rocket</span>
+                <strong>01811871332</strong>
+            </div>
+            <p style="text-align: center; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;" data-en="Choose Payment Method" data-bn="পেমেন্ট মেথড বেছে নিন">Choose Payment Method</p>
+
+            <div class="payment-methods">
+                <div class="pay-method active" data-method="bkash">
+                    <div class="pay-brand" style="color:#e2136e;">bKash</div>
+                    <span>bKash</span>
+                </div>
+                <div class="pay-method" data-method="nagad">
+                    <div class="pay-brand" style="color:#f7941d;">Nagad</div>
+                    <span>Nagad</span>
+                </div>
+                <div class="pay-method" data-method="rocket">
+                    <div class="pay-brand" style="color:#8c1561;">Rocket</div>
+                    <span>Rocket</span>
+                </div>
+            </div>
+
+            <form id="paymentForm" action="status.html" method="get">
+                <div class="input-group">
+                    ID
+                    <input name="fullName" type="text" placeholder="Full Name" data-placeholder-en="Full Name" data-placeholder-bn="পুরো নাম" required/>
+                </div>
+                <div class="input-group">
+                    ☎
+                    <input name="phone" type="text" placeholder="Phone Number" data-placeholder-en="Phone Number" data-placeholder-bn="ফোন নম্বর" required/>
+                </div>
+                <div class="input-group">
+                    ••
+                    <input name="password" type="password" placeholder="Password" data-placeholder-en="Password" data-placeholder-bn="পাসওয়ার্ড" required/>
+                </div>
+                <div class="input-group">
+                    ☎
+                    <input name="paymentFrom" type="text" placeholder="Sender Number" data-placeholder-en="Sender Number" data-placeholder-bn="যে নম্বর থেকে পাঠিয়েছেন" required/>
+                </div>
+                <div class="input-group">
+                    #
+                    <input name="trxId" type="text" placeholder="Transaction ID" data-placeholder-en="Transaction ID" data-placeholder-bn="ট্রানজেকশন আইডি" required/>
+                </div>
+                <button type="submit" class="auth-btn" data-en="CONFIRM PAYMENT" data-bn="পেমেন্ট কনফার্ম করুন">CONFIRM PAYMENT</button>
+            </form>
+        </div>
+
+        <div class="copyright">
+            © 2026 SKYNITY • Powered by STARLINK • All rights reserved.
+        </div>
+    </div>
+
+    <script>
+        (function () {
+        var API_ROOT = "https://api.skynity.org/api";
+        var urlParams = new URLSearchParams(window.location.search);
+        var pkg = urlParams.get('pkg') || "mini10";
+        var packageId = urlParams.get("packageId") || "";
+        var selectedMethod = "bkash";
+        var pkgDetails = {
+            'mini10': { name: 'MINI 10', validity: '10 Days', price: '50', speed: '3M/3M' },
+            'mini15': { name: 'MINI 15', validity: '15 Days', price: '70', speed: '3M/3M' },
+            'mini20': { name: 'MINI 20', validity: '20 Days', price: '90', speed: '3M/3M' },
+            'basic': { name: 'BASIC', validity: '30 Days', price: '100', speed: '3M/3M' },
+            'pro': { name: 'PRO', validity: '30 Days', price: '150', speed: '5M/5M' },
+            'ultra': { name: 'ULTRA FAMILY', validity: '30 Days', price: '500', speed: '15M/15M' }
+        };
+        function api(path, options) {
+            return fetch(API_ROOT + path, options || {}).then(function (res) {
+                return res.json().catch(function () { return {}; }).then(function (data) {
+                    if (!res.ok || data.error) throw new Error(data.message || data.error || "API request failed");
+                    return data.data || data.packages || data;
+                });
+            });
+        }
+        function isBangla() {
+            return String(navigator.language || navigator.userLanguage || "").toLowerCase().indexOf("bn") === 0;
+        }
+        function applyLanguage() {
+            var key = isBangla() ? "bn" : "en";
+            Array.prototype.slice.call(document.querySelectorAll("[data-" + key + "]")).forEach(function (node) {
+                node.textContent = node.getAttribute("data-" + key);
+            });
+            Array.prototype.slice.call(document.querySelectorAll("[data-placeholder-" + key + "]")).forEach(function (node) {
+                node.setAttribute("placeholder", node.getAttribute("data-placeholder-" + key));
+            });
+            document.documentElement.lang = key === "bn" ? "bn" : "en";
+        }
+        function setPackage(item) {
+            document.getElementById('pkgName').innerText = item.name;
+            document.getElementById('pkgValidity').innerText = item.validity;
+            document.getElementById('pkgPrice').innerText = item.price + " BDT";
+        }
+        function normalize(raw) {
+            return {
+                id: raw.id || raw.packageId || packageId,
+                name: raw.name || raw.title || pkgDetails[pkg].name,
+                validity: (raw.validityDays || raw.days || 30) + " Days",
+                price: raw.priceBdt || raw.price || raw.amount || pkgDetails[pkg].price
+            };
+        }
+        applyLanguage();
+        setPackage(pkgDetails[pkg] || pkgDetails.mini10);
+        api("/portal/packages").then(function (items) {
+            if (!Array.isArray(items)) return;
+            for (var i = 0; i < items.length; i += 1) {
+                var code = String(items[i].code || items[i].slug || items[i].name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+                if ((packageId && items[i].id === packageId) || code === pkg) {
+                    var selected = normalize(items[i]);
+                    packageId = selected.id;
+                    setPackage(selected);
+                    return;
+                }
+            }
+        }).catch(function () {});
+        Array.prototype.slice.call(document.querySelectorAll(".pay-method")).forEach(function (node) {
+            node.addEventListener("click", function () {
+                selectedMethod = node.getAttribute("data-method");
+                Array.prototype.slice.call(document.querySelectorAll(".pay-method")).forEach(function (item) {
+                    item.classList.toggle("active", item === node);
+                });
+            });
+        });
+        document.getElementById("paymentForm").addEventListener("submit", function (event) {
+            event.preventDefault();
+            var form = event.currentTarget;
+            var data = new FormData(form);
+            api("/portal/payment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    packageId: packageId,
+                    packageCode: pkg,
+                    fullName: String(data.get("fullName") || "").trim(),
+                    phone: String(data.get("phone") || "").trim(),
+                    password: String(data.get("password") || ""),
+                    paymentMethod: selectedMethod,
+                    paymentFrom: String(data.get("paymentFrom") || "").trim(),
+                    trxId: String(data.get("trxId") || "").trim(),
+                    mac: "$(mac)",
+                    ip: "$(ip)"
+                })
+            }).then(function (result) {
+                var username = result.username || result.phone || String(data.get("phone") || "").trim();
+                var password = result.password || String(data.get("password") || "");
+                localStorage.setItem("skynity_username", username);
+                localStorage.setItem("skynity_password", password);
+                window.location.href = "status.html";
+            }).catch(function (error) {
+                alert(error.message || "Payment submission failed.");
+            });
+        });
+        }());
+    </script>
+</body>
+</html>

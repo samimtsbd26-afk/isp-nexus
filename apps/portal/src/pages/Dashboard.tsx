@@ -36,8 +36,9 @@ export default function Dashboard() {
     if (!token) { navigate("/login"); return; }
 
     fetch("/api/trpc/portal.dashboard", {
-      method: "GET",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json: { token } }),
     })
       .then((r) => r.json())
       .then((res) => {

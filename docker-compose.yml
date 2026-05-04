@@ -156,11 +156,14 @@ services:
     image: freeradius/freeradius-server:latest
     profiles: [radius]
     restart: unless-stopped
+    command: ["freeradius", "-f", "-l", "stdout"]
     ports:
       - "1812:1812/udp"
       - "1813:1813/udp"
     volumes:
-      - ./infrastructure/radius/config:/etc/freeradius/3.0:ro
+      - ./infrastructure/radius/config/clients.conf:/etc/freeradius/clients.conf:ro
+      - ./infrastructure/radius/config/sql.conf:/etc/freeradius/mods-available/sql:ro
+      - ./infrastructure/radius/config/sql.conf:/etc/freeradius/mods-enabled/sql:ro
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-isp_nexus}

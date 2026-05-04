@@ -110,7 +110,7 @@ export const createHotspotTemplateSchema = z.object({
   name: z.string().min(1).max(100),
   title: z.string().optional(),
   companyName: z.string().optional(),
-  logoUrl: z.string().url().optional(),
+  logoUrl: z.string().refine((value) => /^https?:\/\//i.test(value) || /^data:image\//i.test(value), "Invalid logo URL").optional(),
   primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   htmlContent: z.string().optional(),

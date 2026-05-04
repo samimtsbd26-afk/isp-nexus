@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Routes, Route, Navigate } from "react-router";
+import { useEffect, useState } from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { trpc, createTRPCClient } from "./lib/trpc";
+import { getAccessToken, installChunkLoadRetry, restoreSession, subscribeAuthState } from "./lib/auth";
 
 // Auth
 import Login from "./pages/auth/Login";
@@ -56,15 +57,56 @@ import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 
 function RequireAuth({ children }: Readonly<{ children: React.ReactNode }>) {
-  const token = localStorage.getItem("isp_access_token");
-  return token ? <>{children}</> : <Navigate to="/login" replace />;
+  const location = useLocation();
+  const [state, setState] = useState<"checking" | "authed" | "guest">(() => getAccessToken() ? "authed" : "checking");
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const token = await restoreSession();
+      if (!cancelled) setState(token ? "authed" : "guest");
+    };
+    if (getAccessToken()) setState("authed");
+    else void check();
+    const unsubscribe = subscribeAuthState(() => setState(getAccessToken() ? "authed" : "guest"));
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  if (state === "checking") {
+    return <div className="min-h-screen bg-background" />;
+  }
+  return state === "authed" ? <>{children}</> : <Navigate to="/login" replace state={{ from: location.pathname }} />;
 }
 
 export default function App() {
   const [queryClient] = useState(() => new QueryClient({
-    defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+    defaultOptions: {
+      queries: {
+        retry: (failureCount, error) => {
+          const message = error instanceof Error ? error.message : String(error ?? "");
+          if (/UNAUTHORIZED|401/.test(message)) return false;
+          return failureCount < 1;
+        },
+        staleTime: 0,
+        gcTime: 5 * 60_000,
+        refetchOnMount: "always",
+        refetchOnWindowFocus: false,
+      },
+    },
   }));
   const [trpcClient] = useState(() => createTRPCClient());
+
+  useEffect(() => {
+    installChunkLoadRetry();
+    const unsubscribe = subscribeAuthState(() => {
+      void queryClient.cancelQueries();
+      queryClient.clear();
+    });
+    return unsubscribe;
+  }, [queryClient]);
 
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>

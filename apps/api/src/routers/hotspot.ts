@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and } from "drizzle-orm";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { hotspotTemplates } from "@isp-nexus/db";
+import { hotspotTemplates, routers } from "@isp-nexus/db";
 import { createHotspotTemplateSchema } from "@isp-nexus/shared";
+import { decryptText } from "../lib/crypto.js";
+import { env } from "../lib/env.js";
+import { getMikroTikClient, type MikroTikApi } from "../services/mikrotik/client.js";
 
 export const hotspotRouter = router({
   listTemplates: authedProcedure.query(async ({ ctx }) => {
@@ -50,24 +56,194 @@ export const hotspotRouter = router({
     return { ok: true };
   }),
 
-  deployTemplate: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
+  deployTemplate: adminProcedure.input(z.object({ id: z.string().uuid(), routerId: z.string().uuid().optional() })).mutation(async ({ ctx, input }) => {
     const [tmpl] = await ctx.db.select().from(hotspotTemplates)
       .where(and(eq(hotspotTemplates.id, input.id), eq(hotspotTemplates.orgId, ctx.orgId))).limit(1);
     if (!tmpl) throw new TRPCError({ code: "NOT_FOUND" });
 
     const html = tmpl.htmlContent ?? buildDefaultHtml(tmpl);
-    const { writeFileSync, mkdirSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
+    const css = tmpl.cssContent ?? buildDefaultCss(tmpl);
+    const files = await buildHotspotFiles(tmpl, html, css);
 
-    const hotspotDir = resolve(process.cwd(), "../../apps/hotspot");
-    mkdirSync(hotspotDir, { recursive: true });
-    writeFileSync(resolve(hotspotDir, "login.html"), html, "utf8");
-    if (tmpl.cssContent) {
-      writeFileSync(resolve(hotspotDir, "style.css"), tmpl.cssContent, "utf8");
+    const [target] = await ctx.db.select().from(routers)
+      .where(and(
+        eq(routers.orgId, ctx.orgId),
+        eq(routers.isActive, true),
+        input.routerId ? eq(routers.id, input.routerId) : eq(routers.isDefault, true),
+      ))
+      .limit(1);
+    if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Target router not found" });
+
+    const password = decryptText(target.passwordEncrypted);
+    const port = target.useSsl ? target.sslPort : target.port;
+    const client = await getMikroTikClient({
+      host: target.host,
+      port,
+      username: target.username,
+      password,
+      useSsl: target.useSsl,
+    });
+
+    try {
+      const htmlDirectory = await getHotspotHtmlDirectory(client);
+      for (const file of files) {
+        await upsertRouterFile(client, `${htmlDirectory}/${file.name}`, file.name, file.contents);
+      }
+    } finally {
+      await client.close();
     }
-    return { ok: true, path: hotspotDir };
+
+    return { ok: true, router: target.name, files: files.map((file) => file.name) };
   }),
 });
+
+const BINARY_ASSET_EXTENSIONS = new Set([".png", ".webp", ".jpg", ".jpeg", ".svg"]);
+
+function isBinaryAsset(name: string) {
+  const lower = name.toLowerCase();
+  return Array.from(BINARY_ASSET_EXTENSIONS).some((ext) => lower.endsWith(ext));
+}
+
+function publicAssetBaseUrl() {
+  return (env.API_URL || "https://api.skynity.org").replace(/\/$/, "");
+}
+
+async function upsertRouterFile(client: MikroTikApi, name: string, relativeName: string, contents: string | Buffer): Promise<void> {
+  const existing = (await client.print("/file")).filter((file) => file.name === name);
+  for (const file of existing) {
+    const fileId = file[".id"] ?? file.id;
+    if (fileId) await client.remove("/file", fileId);
+  }
+  await fetchRouterAsset(client, name, relativeName, Buffer.byteLength(contents));
+}
+
+async function fetchRouterAsset(client: MikroTikApi, name: string, relativeName: string, expectedSize: number): Promise<void> {
+  const url = `${publicAssetBaseUrl()}/api/hotspot-assets/${relativeName.split("/").map(encodeURIComponent).join("/")}`;
+  let lastSize = 0;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const existing = (await client.print("/file")).filter((file) => file.name === name);
+    for (const file of existing) {
+      const fileId = file[".id"] ?? file.id;
+      if (fileId) await client.remove("/file", fileId);
+    }
+    await client.exec("/tool", "fetch", {
+      url,
+      "dst-path": name,
+      mode: "https",
+    });
+    const [remote] = await client.print("/file", { name });
+    lastSize = Number(remote?.size ?? 0);
+    if (lastSize === expectedSize) return;
+  }
+  const kind = isBinaryAsset(relativeName) ? "Binary asset" : "Hotspot file";
+  throw new Error(`${kind} upload failed for ${relativeName}: router size ${lastSize}, local size ${expectedSize}`);
+}
+
+async function getHotspotHtmlDirectory(client: MikroTikApi): Promise<string> {
+  const [hotspot] = await client.print("/ip/hotspot");
+  const profileName = hotspot?.profile;
+  if (!profileName) return "hotspot";
+
+  const [profile] = await client.print("/ip/hotspot/profile", { name: profileName });
+  return profile?.htmlDirectory || "hotspot";
+}
+
+function buildHotspotFiles(
+  tmpl: { title?: string | null; companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null },
+  html: string,
+  css: string,
+): Promise<Array<{ name: string; contents: string | Buffer }>> {
+  return buildProductionHotspotFiles().catch(() => buildGeneratedHotspotFiles(tmpl, html, css));
+}
+
+async function buildProductionHotspotFiles(): Promise<Array<{ name: string; contents: string | Buffer }>> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const hotspotDir = resolve(here, "../../../hotspot");
+  const imageDir = resolve(hotspotDir, "img");
+  const files: Array<{ name: string; contents: string | Buffer }> = [];
+  const topLevel = await readdir(hotspotDir);
+  for (const name of topLevel.filter((item) => /\.(html|css|js)$/i.test(item)).sort()) {
+    files.push({ name, contents: await readFile(resolve(hotspotDir, name), "utf8") });
+  }
+  const images = await readdir(imageDir);
+  for (const image of images) {
+    files.push({ name: `img/${image}`, contents: await readFile(resolve(imageDir, image)) });
+  }
+  return files;
+}
+
+function buildGeneratedHotspotFiles(
+  tmpl: { title?: string | null; companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null },
+  html: string,
+  css: string,
+): Array<{ name: string; contents: string }> {
+  const success = buildStatusPage(tmpl, "success", "Connected", "Your session is active.");
+  const payment = buildStatusPage(tmpl, "payment", "Payment", "Select a package from the portal to activate internet.");
+  const register = buildStatusPage(tmpl, "registration", "Registration", "Create an account from the ISP portal.");
+  const logout = buildStatusPage(tmpl, "logout", "Logged out", "Your hotspot session has ended.");
+  return [
+    { name: "login.html", contents: injectStylesheet(html) },
+    { name: "style.css", contents: css },
+    { name: "status.html", contents: success },
+    { name: "payment.html", contents: payment },
+    { name: "register.html", contents: register },
+    { name: "logout.html", contents: logout },
+  ];
+}
+
+function injectStylesheet(html: string): string {
+  const stylesheet = '<link rel="stylesheet" href="style.css"/>';
+  const normalized = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi, stylesheet);
+  if (/^\s*<!doctype|^\s*<html/i.test(normalized)) {
+    if (normalized.includes("style.css")) return normalized;
+    return normalized.replace("</head>", `  ${stylesheet}\n</head>`);
+  }
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  ${stylesheet}
+</head>
+<body>
+${normalized}
+</body>
+</html>`;
+}
+
+function buildDefaultCss(tmpl: { primaryColor?: string | null; backgroundColor?: string | null }): string {
+  const primary = tmpl.primaryColor ?? "#3b82f6";
+  const bg = tmpl.backgroundColor ?? "#0f172a";
+  return `:root{color-scheme:dark;--primary:${primary};--bg:${bg}}body{background:var(--bg);color:#e5e7eb}`;
+}
+
+function buildStatusPage(
+  tmpl: { companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null },
+  page: string,
+  title: string,
+  body: string,
+): string {
+  const primary = tmpl.primaryColor ?? "#3b82f6";
+  const bg = tmpl.backgroundColor ?? "#0f172a";
+  const company = tmpl.companyName ?? "ISP Nexus";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>${company} ${title}</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body style="min-height:100vh;display:grid;place-items:center;background:${bg};font-family:system-ui,sans-serif;margin:0;color:#e5e7eb">
+  <main style="width:min(420px,calc(100vw - 32px));border:1px solid ${primary}55;border-radius:18px;padding:28px;background:rgba(15,23,42,.92);box-shadow:0 24px 60px rgba(0,0,0,.35)">
+    <p style="margin:0 0 8px;color:${primary};font-weight:800">${company}</p>
+    <h1 style="margin:0 0 10px;font-size:26px">${title}</h1>
+    <p style="margin:0 0 22px;color:#94a3b8">${body}</p>
+    ${page === "logout" ? '<a href="$(link-login)" style="display:block;text-align:center;padding:12px 16px;border-radius:10px;background:' + primary + ';color:white;text-decoration:none;font-weight:700">Login again</a>' : ""}
+  </main>
+</body>
+</html>`;
+}
 
 function buildDefaultHtml(tmpl: { title?: string | null; companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null }): string {
   const primary = tmpl.primaryColor ?? "#3b82f6";

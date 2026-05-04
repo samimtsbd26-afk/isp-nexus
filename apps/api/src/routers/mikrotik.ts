@@ -16,6 +16,30 @@ async function getRouterClient(db: any, orgId: string, routerId: string): Promis
 }
 
 const routerIdInput = z.object({ routerId: z.string().uuid() });
+const SHARED_POOL_MBPS = 450;
+
+function toNumber(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseRateBps(value: unknown): number {
+  if (typeof value === "number") return value;
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  const match = raw.match(/^([\d.]+)\s*([kKmMgG]?)(?:bps)?$/);
+  if (!match) return toNumber(raw);
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  if (unit === "g") return amount * 1_000_000_000;
+  if (unit === "m") return amount * 1_000_000;
+  if (unit === "k") return amount * 1_000;
+  return amount;
+}
+
+function mbpsFromBps(value: number): number {
+  return Math.round((value / 1_000_000) * 10) / 10;
+}
 
 export const mikrotikRouter = router({
   getDeviceInfo: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
@@ -270,11 +294,28 @@ export const mikrotikRouter = router({
       const interfaces = await client.print("/interface");
       const activePppoe = await client.print("/ppp/active");
       const activeHotspot = await client.print("/ip/hotspot/active");
+      const hotspotUsers = await client.print("/ip/hotspot/user");
       const queues = await client.print("/queue/simple");
+      const queueTree = await client.print("/queue/tree");
       const firewallFilter = await client.print("/ip/firewall/filter");
       const routes = await client.print("/ip/route");
 
       const runningIfaces = interfaces.filter((i: any) => i.running === "true" || i.running === true);
+      const sharedQueues = queueTree.filter((q: any) => String(q.name ?? "").startsWith("skynity-shared-"));
+      const currentSharedBps = sharedQueues.reduce((sum: number, queue: any) => sum + parseRateBps(queue.rate), 0);
+      const packageUtilization = activeHotspot.reduce((acc: Record<string, { activeUsers: number; bytesIn: number; bytesOut: number }>, user: any) => {
+        const profile = String(user.profile ?? "default");
+        acc[profile] ??= { activeUsers: 0, bytesIn: 0, bytesOut: 0 };
+        acc[profile].activeUsers += 1;
+        acc[profile].bytesIn += toNumber(user.bytesIn);
+        acc[profile].bytesOut += toNumber(user.bytesOut);
+        return acc;
+      }, {});
+      const burstProfiles = new Set(
+        (await client.print("/ip/hotspot/user/profile"))
+          .filter((profile: any) => String(profile.name ?? "").startsWith("skynity_") && String(profile.rateLimit ?? profile["rate-limit"] ?? "").split(" ").length > 1)
+          .map((profile: any) => profile.name),
+      );
 
       return {
         identity: identity?.name ?? "Unknown",
@@ -293,6 +334,20 @@ export const mikrotikRouter = router({
         runningInterfaceCount: runningIfaces.length,
         activePppoeCount: activePppoe.length,
         activeHotspotCount: activeHotspot.length,
+        hotspotUserCount: hotspotUsers.length,
+        sharedBandwidth: {
+          totalPoolMbps: SHARED_POOL_MBPS,
+          activeUsers: activeHotspot.length,
+          currentSharedUsageMbps: mbpsFromBps(currentSharedBps),
+          burstUsers: activeHotspot.filter((user: any) => burstProfiles.has(user.profile)).length,
+          availablePoolMbps: Math.max(0, SHARED_POOL_MBPS - mbpsFromBps(currentSharedBps)),
+          packageUtilization: Object.entries(packageUtilization).map(([profile, usage]) => ({
+            profile,
+            activeUsers: usage.activeUsers,
+            bytesIn: usage.bytesIn,
+            bytesOut: usage.bytesOut,
+          })),
+        },
         queueCount: queues.length,
         firewallRuleCount: firewallFilter.length,
         routeCount: routes.length,

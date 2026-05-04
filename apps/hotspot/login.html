@@ -1,12 +1,370 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=./index.html">
-  <title>Redirecting...</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Skynity ISP - Hotspot Login</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <p>Redirecting to SKYNITY Portal...</p>
-  <script>window.location.href = './index.html';</script>
+    <div class="bg-stars"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <button class="login-toggle" type="button" title="Login" data-en="Login" data-bn="লগইন">Login</button>
+            <a href="login.html" class="logo">
+                <h1>SKYNITY</h1>
+                <p>POWERED BY STARLINK</p>
+            </a>
+            <a href="intent://send?phone=8801811871332#Intent;package=com.whatsapp;scheme=smsto;end" class="support-btn external-support" data-label="WhatsApp" data-fallback="01811871332">
+                <span data-en="Support" data-bn="সাপোর্ট">Support</span>
+            </a>
+        </header>
+
+        <!-- Banner -->
+        <div class="banner">
+            <div class="banner-text">
+                <h2 data-en="NEXT GENERATION" data-bn="নেক্সট জেনারেশন">NEXT GENERATION</h2>
+                <h1>INTERNET</h1>
+                <p data-en="Enterprise WiFi powered by Starlink satellite backbone." data-bn="Starlink স্যাটেলাইট ব্যাকবোনে চালিত প্রিমিয়াম WiFi।">Enterprise WiFi powered by Starlink satellite backbone.</p>
+            </div>
+            <div class="banner-img">
+                <img src="img/dish.png" alt="Starlink Dish">
+            </div>
+        </div>
+
+        <!-- Features Bar -->
+        <div class="features-bar">
+            <div class="feature-item">
+                ⚡
+                <span data-en="High Speed" data-bn="হাই স্পিড">High Speed</span>
+            </div>
+            <div class="feature-item">
+                ◉
+                <span data-en="Low Latency" data-bn="লো ল্যাটেন্সি">Low Latency</span>
+            </div>
+            <div class="feature-item">
+                ◆
+                <span data-en="Secure Network" data-bn="সিকিউর নেটওয়ার্ক">Secure Network</span>
+            </div>
+        </div>
+
+        <!-- MikroTik Login Form (Hidden by default, used if mac-login fails or direct login needed) -->
+        <div class="auth-box" id="loginFormSection" style="display: none;">
+            <h2>Member Login</h2>
+            <!-- $(if error) -->
+            <div class="error-msg">$(error)</div>
+            <!-- $(endif) -->
+            <form name="login" action="$(link-login-only)" method="post" $(if chap-id) onSubmit="return doLogin()" $(endif)>
+                <input type="hidden" name="dst" value="$(link-orig)" />
+                <input type="hidden" name="popup" value="true" />
+
+                <div class="input-group">
+                    ID
+                    <input name="username" type="text" placeholder="Username or Phone" value="$(username)"/>
+                </div>
+                <div class="input-group">
+                    ••
+                    <input name="password" type="password" placeholder="Password"/>
+                </div>
+                <button type="submit" class="auth-btn">CONNECT INTERNET</button>
+
+                <div class="auth-links">
+                    <p>New user? <a href="register.html">Register here</a></p>
+                    <p>Want a package? <a href="#" onclick="document.getElementById('loginFormSection').style.display='none'; document.getElementById('packagesSection').style.display='block'; return false;">View Packages</a></p>
+                </div>
+            </form>
+        </div>
+
+        <div id="packagesSection">
+            <!-- Free Trial -->
+            <div class="free-trial-card">
+                <div class="trial-img">
+                    <img src="img/gift.png" alt="Gift">
+                </div>
+                <div class="trial-content">
+                    <h3 data-en="7 DAYS FREE TRIAL" data-bn="৭ দিন ফ্রি ট্রায়াল">7 DAYS FREE TRIAL</h3>
+                    <p data-en="New users can enjoy free premium internet." data-bn="নতুন ইউজাররা ফ্রি প্রিমিয়াম ইন্টারনেট ব্যবহার করতে পারবেন।">New users can enjoy free premium internet.</p>
+                </div>
+                <div class="trial-actions">
+                <a href="register.html?trial=1" class="btn-primary" id="trialCta" data-en="START FREE TRIAL" data-bn="ফ্রি ট্রায়াল শুরু করুন">START FREE TRIAL</a>
+                    <a href="status.html" class="btn-outline" data-en="HOW IT WORKS" data-bn="কিভাবে কাজ করে">HOW IT WORKS</a>
+                </div>
+            </div>
+
+            <div class="section-title" data-en="CHOOSE YOUR PACKAGE" data-bn="আপনার প্যাকেজ বেছে নিন">CHOOSE YOUR PACKAGE</div>
+
+            <!-- Packages -->
+            <div class="packages">
+                <!-- Mini 10 -->
+                <div class="package-card cyan" data-package-code="mini10">
+                    <div class="pkg-title">MINI 10 </div>
+                    <div class="pkg-price">50 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 3 Mbps Speed</li>
+                        <li> 10 Days Validity</li>
+                        <li> 1 Device</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=mini10" class="pkg-btn">BUY NOW</a>
+                </div>
+
+                <!-- Mini 15 -->
+                <div class="package-card blue" data-package-code="mini15">
+                    <div class="pkg-title">MINI 15 </div>
+                    <div class="pkg-price">70 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 3 Mbps Speed</li>
+                        <li> 15 Days Validity</li>
+                        <li> 1 Device</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=mini15" class="pkg-btn">BUY NOW</a>
+                </div>
+
+                <!-- Mini 20 -->
+                <div class="package-card purple" data-package-code="mini20">
+                    <div class="pkg-title">MINI 20 </div>
+                    <div class="pkg-price">90 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 3 Mbps Speed</li>
+                        <li> 20 Days Validity</li>
+                        <li> 1 Device</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=mini20" class="pkg-btn">BUY NOW</a>
+                </div>
+
+                <!-- Basic -->
+                <div class="package-card green" data-package-code="basic">
+                    <div class="pkg-title">BASIC </div>
+                    <div class="pkg-price">100 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 3 Mbps Speed</li>
+                        <li> 30 Days Validity</li>
+                        <li> 1 Device</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=basic" class="pkg-btn">BUY NOW</a>
+                </div>
+
+                <!-- Pro -->
+                <div class="package-card purple" data-package-code="pro">
+                    <div class="pkg-title">PRO ⚡</div>
+                    <div class="pkg-price">150 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 5 Mbps Speed</li>
+                        <li> 30 Days Validity</li>
+                        <li> 1 Device</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=pro" class="pkg-btn">BUY NOW</a>
+                </div>
+
+                <!-- Ultra Family -->
+                <div class="package-card yellow" data-package-code="ultra">
+                    <div class="pkg-title">ULTRA FAMILY </div>
+                    <div class="pkg-price">500 <span>BDT</span></div>
+                    <ul class="pkg-features">
+                        <li> 15 Mbps Speed</li>
+                        <li> 30 Days Validity</li>
+                        <li> 4 Devices</li>
+                    </ul>
+                    <div class="pkg-optimized"> STARLINK OPTIMIZED</div>
+                    <a href="payment.html?pkg=ultra" class="pkg-btn">BUY NOW</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Features -->
+        <div class="bottom-features">
+            <div class="b-feature">
+                ◉
+                <div>
+                    <h4 data-en="Powered by Starlink" data-bn="Starlink দ্বারা চালিত">Powered by Starlink</h4>
+                    <p data-en="Global satellite internet network." data-bn="গ্লোবাল স্যাটেলাইট ইন্টারনেট নেটওয়ার্ক।">Global satellite internet network.</p>
+                </div>
+            </div>
+            <div class="b-feature">
+
+                <div>
+                    <h4 data-en="Ultra Low Latency" data-bn="আল্ট্রা লো ল্যাটেন্সি">Ultra Low Latency</h4>
+                    <p data-en="Smooth streaming & gaming." data-bn="স্মুথ স্ট্রিমিং ও গেমিং।">Smooth streaming & gaming.</p>
+                </div>
+            </div>
+            <div class="b-feature">
+                ◎
+                <div>
+                    <h4 data-en="Wide Coverage" data-bn="ওয়াইড কভারেজ">Wide Coverage</h4>
+                    <p data-en="Works in remote anywhere." data-bn="রিমোট এলাকাতেও নির্ভরযোগ্য।">Works in remote anywhere.</p>
+                </div>
+            </div>
+            <div class="b-feature">
+                ◆
+                <div>
+                    <h4 data-en="Secure & Reliable" data-bn="সিকিউর ও নির্ভরযোগ্য">Secure & Reliable</h4>
+                    <p data-en="Enterprise grade network security." data-bn="এন্টারপ্রাইজ গ্রেড নেটওয়ার্ক সিকিউরিটি।">Enterprise grade network security.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contact Buttons -->
+        <div class="contact-footer">
+            <span data-en="NEED HELP?" data-bn="সাহায্য লাগবে?">NEED HELP?</span>
+            <a href="intent://send?phone=8801811871332#Intent;package=com.whatsapp;scheme=smsto;end" class="contact-btn whatsapp external-support" data-label="WhatsApp" data-fallback="01811871332">WhatsApp</a>
+            <a href="intent://resolve?domain=shamimkhan313#Intent;package=org.telegram.messenger;scheme=https;end" class="contact-btn telegram external-support" data-label="Telegram" data-fallback="@shamimkhan313">Telegram</a>
+            <a href="tel:+8801811871332" class="contact-btn support" data-en="Call Support" data-bn="কল করুন">Call Support</a>
+        </div>
+
+        <div class="copyright">
+            © 2026 SKYNITY • Powered by STARLINK • All rights reserved.
+        </div>
+    </div>
+
+    <!-- Script to handle md5 for mikrotik -->
+    <!-- $(if chap-id) -->
+    <script type="text/javascript" src="md5.js"></script>
+    <script type="text/javascript">
+    function doLogin() {
+        document.login.username.value = document.login.username.value;
+        document.login.password.value = hexMD5('$(chap-id)' + document.login.password.value + '$(chap-challenge)');
+        return true;
+    }
+    </script>
+    <!-- $(endif) -->
+    <script>
+        (function () {
+        var API_ROOT = "https://api.skynity.org/api";
+        var qs = new URLSearchParams(window.location.search);
+        var LOGIN_URL = qs.get("loginUrl") || "$(link-login-only)" || "/login";
+        var LOGIN_ORIG = qs.get("dst") || "$(link-orig)" || window.location.origin;
+        var PACKAGE_TONES = ["cyan", "blue", "purple", "green", "purple", "yellow"];
+        var FALLBACK = [
+            { code: "mini10", name: "MINI 10", priceBdt: 50, downloadMbps: 3, uploadMbps: 3, validityDays: 10, devices: 1 },
+            { code: "mini15", name: "MINI 15", priceBdt: 70, downloadMbps: 3, uploadMbps: 3, validityDays: 15, devices: 1 },
+            { code: "mini20", name: "MINI 20", priceBdt: 90, downloadMbps: 3, uploadMbps: 3, validityDays: 20, devices: 1 },
+            { code: "basic", name: "BASIC", priceBdt: 100, downloadMbps: 3, uploadMbps: 3, validityDays: 30, devices: 1 },
+            { code: "pro", name: "PRO", priceBdt: 150, downloadMbps: 5, uploadMbps: 5, validityDays: 30, devices: 1 },
+            { code: "ultra", name: "ULTRA FAMILY", priceBdt: 500, downloadMbps: 15, uploadMbps: 15, validityDays: 30, devices: 4 }
+        ];
+        function api(path, options) {
+            return fetch(API_ROOT + path, options || {}).then(function (res) {
+                return res.json().catch(function () { return {}; }).then(function (data) {
+                    if (!res.ok || data.error) throw new Error(data.message || data.error || "API request failed");
+                    return data.data || data.packages || data;
+                });
+            });
+        }
+        function esc(value) {
+            var node = document.createElement("div");
+            node.textContent = String(value == null ? "" : value);
+            return node.innerHTML;
+        }
+        function isBangla() {
+            return String(navigator.language || navigator.userLanguage || "").toLowerCase().indexOf("bn") === 0;
+        }
+        function text(en, bn) {
+            return isBangla() ? bn : en;
+        }
+        function applyLanguage() {
+            var key = isBangla() ? "bn" : "en";
+            Array.prototype.slice.call(document.querySelectorAll("[data-" + key + "]")).forEach(function (node) {
+                node.textContent = node.getAttribute("data-" + key);
+            });
+            document.documentElement.lang = key === "bn" ? "bn" : "en";
+        }
+        function devices(pkg) {
+            if (pkg.devices) return Number(pkg.devices) || 1;
+            var features = Array.isArray(pkg.features) ? pkg.features.join(" ") : "";
+            var match = features.match(/devices?:\s*(\d+)|(\d+)\s*devices?/i);
+            return Number(match && (match[1] || match[2])) || 1;
+        }
+        function normalize(pkg, index) {
+            var code = String(pkg.code || pkg.slug || pkg.key || pkg.name || FALLBACK[index] && FALLBACK[index].code || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+            return {
+                id: pkg.id || pkg.packageId || code,
+                code: code || (FALLBACK[index] && FALLBACK[index].code) || ("pkg" + index),
+                name: pkg.name || pkg.title || (FALLBACK[index] && FALLBACK[index].name) || "PACKAGE",
+                priceBdt: pkg.priceBdt || pkg.price || pkg.amount || (FALLBACK[index] && FALLBACK[index].priceBdt) || 0,
+                downloadMbps: pkg.downloadMbps || pkg.download || pkg.speedMbps || (FALLBACK[index] && FALLBACK[index].downloadMbps) || 0,
+                uploadMbps: pkg.uploadMbps || pkg.upload || pkg.downloadMbps || (FALLBACK[index] && FALLBACK[index].uploadMbps) || 0,
+                validityDays: pkg.validityDays || pkg.days || pkg.durationDays || (FALLBACK[index] && FALLBACK[index].validityDays) || 30,
+                devices: devices(pkg)
+            };
+        }
+        function renderPackages(items) {
+            var host = document.querySelector(".packages");
+            host.innerHTML = items.map(function (raw, index) {
+                var pkg = normalize(raw, index);
+                var tone = PACKAGE_TONES[index % PACKAGE_TONES.length];
+                return '<div class="package-card ' + tone + '" data-package-code="' + esc(pkg.code) + '">' +
+                    '<div class="pkg-title">' + esc(pkg.name) + '</div>' +
+                    '<div class="pkg-price">' + esc(pkg.priceBdt) + ' <span>BDT</span></div>' +
+                    '<ul class="pkg-features">' +
+                    '<li>' + esc(pkg.downloadMbps) + 'M/' + esc(pkg.uploadMbps) + 'M</li>' +
+                    '<li>' + esc(pkg.validityDays) + ' ' + text('Days', 'দিন') + '</li>' +
+                    '<li>' + esc(pkg.devices) + (pkg.devices === 1 ? text(' Device', ' ডিভাইস') : text(' Devices', ' ডিভাইস')) + '</li>' +
+                    '</ul><div class="pkg-optimized">' + text('STARLINK OPTIMIZED', 'STARLINK অপ্টিমাইজড') + '</div>' +
+                    '<a href="payment.html?pkg=' + encodeURIComponent(pkg.code) + '&packageId=' + encodeURIComponent(pkg.id) + '" class="pkg-btn">' + text('BUY NOW', 'কিনুন') + '</a></div>';
+            }).join("");
+        }
+        function tryReconnect() {
+            var username = localStorage.getItem("skynity_username") || qs.get("username") || "";
+            var password = localStorage.getItem("skynity_password") || "";
+            if (!username || !password) return;
+            api("/portal/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: username, password: password, mac: "$(mac)", ip: "$(ip)" })
+            }).then(function () {
+                var form = document.createElement("form");
+                form.method = "post";
+                form.action = LOGIN_URL;
+                form.innerHTML = '<input name="username"><input name="password" type="password"><input name="dst"><input name="popup" value="true">';
+                document.body.appendChild(form);
+                form.username.value = username;
+                form.password.value = password;
+                form.dst.value = LOGIN_ORIG;
+                form.submit();
+            }).catch(function () {});
+        }
+        function showSupportFallback(label, message) {
+            var modal = document.createElement("div");
+            modal.className = "support-modal";
+            modal.innerHTML = '<div><strong>' + esc(label || 'Support') + '</strong><p>' + esc(message) + '</p><button type="button" class="copy-btn">Copy</button><button type="button" class="close-btn">OK</button></div>';
+            document.body.appendChild(modal);
+            modal.querySelector(".copy-btn").onclick = function () {
+                if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(message);
+            };
+            modal.querySelector(".close-btn").onclick = function () { modal.parentNode.removeChild(modal); };
+        }
+        Array.prototype.slice.call(document.querySelectorAll(".external-support")).forEach(function (node) {
+            node.addEventListener("click", function (event) {
+                event.preventDefault();
+                var opened = window.open(node.href, "_blank");
+                setTimeout(function () {
+                    if (!opened || opened.closed) showSupportFallback(node.getAttribute("data-label"), node.getAttribute("data-fallback") || node.href);
+                }, 300);
+            });
+        });
+        document.querySelector('.login-toggle').addEventListener('click', function(e) {
+            e.preventDefault();
+            document.getElementById('packagesSection').style.display = 'none';
+            document.getElementById('loginFormSection').style.display = 'block';
+            window.scrollTo(0,0);
+        });
+        applyLanguage();
+        api("/portal/packages").then(function (items) {
+            renderPackages(Array.isArray(items) ? items : FALLBACK);
+        }).catch(function () {
+            renderPackages(FALLBACK);
+        });
+        api("/portal/trial/status?mac=" + encodeURIComponent("$(mac)") + "&ip=" + encodeURIComponent("$(ip)")).then(function (status) {
+            if (status && status.available === false) document.getElementById("trialCta").classList.add("disabled");
+        }).catch(function () {});
+        tryReconnect();
+        }());
+    </script>
 </body>
 </html>

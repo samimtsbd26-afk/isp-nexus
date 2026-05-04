@@ -1,18 +1,39 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { trpc } from "../../lib/trpc";
 import { toast } from "sonner";
 import { Wifi, Lock, Mail, ArrowRight } from "lucide-react";
+import { getAccessToken, restoreSession, setAccessToken, subscribeAuthState } from "../../lib/auth";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const from = typeof location.state === "object" && location.state && "from" in location.state
+    ? String(location.state.from)
+    : "/";
+
+  useEffect(() => {
+    let cancelled = false;
+    const completeIfAuthed = async () => {
+      const token = getAccessToken() ?? await restoreSession();
+      if (!cancelled && token) navigate(from, { replace: true });
+    };
+    void completeIfAuthed();
+    const unsubscribe = subscribeAuthState(() => {
+      if (getAccessToken()) navigate(from, { replace: true });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [from, navigate]);
 
   const login = trpc.auth.login.useMutation({
     onSuccess: (data) => {
-      localStorage.setItem("isp_access_token", data.accessToken);
-      navigate("/");
+      setAccessToken(data.accessToken);
+      navigate(from, { replace: true });
     },
     onError: (e) => toast.error(e.message),
   });

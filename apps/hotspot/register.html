@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Skynity ISP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="bg-stars"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <a href="login.html" class="icon-btn" title="Back">
+                ←
+            </a>
+            <a href="login.html" class="logo">
+                <h1>SKYNITY</h1>
+                <p>POWERED BY STARLINK</p>
+            </a>
+            <a href="intent://send?phone=8801811871332#Intent;package=com.whatsapp;scheme=smsto;end" class="support-btn external-support" data-label="WhatsApp" data-fallback="01811871332">
+                Support
+            </a>
+        </header>
+
+        <div class="auth-box">
+            <h2>Create Account</h2>
+            <form id="registerForm" action="login.html" method="post">
+                <div class="input-group">
+                    ID
+                    <input type="text" name="name" placeholder="Full Name" required/>
+                </div>
+                <div class="input-group">
+                    ☎
+                    <input type="text" name="phone" placeholder="Phone Number" required/>
+                </div>
+                <div class="input-group">
+                    @
+                    <input type="email" name="email" placeholder="Email Address"/>
+                </div>
+                <div class="input-group">
+                    ••
+                    <input type="password" name="password" placeholder="Password" required/>
+                </div>
+                <div class="input-group">
+                    ••
+                    <input type="password" name="cpassword" placeholder="Confirm Password" required/>
+                </div>
+                <button type="submit" class="auth-btn">REGISTER</button>
+
+                <div class="auth-links">
+                    <p>Already have an account? <a href="login.html">Login here</a></p>
+                </div>
+            </form>
+        </div>
+
+        <div class="copyright">
+            © 2026 SKYNITY • Powered by STARLINK • All rights reserved.
+        </div>
+    </div>
+    <script>
+        (function () {
+        var API_ROOT = "https://api.skynity.org/api";
+        var qs = new URLSearchParams(window.location.search);
+        var LOGIN_URL = qs.get("loginUrl") || "$(link-login-only)" || "/login";
+        var LOGIN_ORIG = qs.get("dst") || "$(link-orig)" || window.location.origin;
+        function api(path, options) {
+            return fetch(API_ROOT + path, options || {}).then(function (res) {
+                return res.json().catch(function () { return {}; }).then(function (data) {
+                    if (!res.ok || data.error) throw new Error(data.message || data.error || "API request failed");
+                    return data.data || data;
+                });
+            });
+        }
+        function connect(username, password) {
+            var form = document.createElement("form");
+            form.method = "post";
+            form.action = LOGIN_URL;
+            form.style.display = "none";
+            form.innerHTML = '<input name="username"><input name="password" type="password"><input name="dst"><input name="popup" value="true">';
+            document.body.appendChild(form);
+            form.username.value = username;
+            form.password.value = password;
+            form.dst.value = LOGIN_ORIG;
+            form.submit();
+        }
+        function esc(value) {
+            var node = document.createElement("div");
+            node.textContent = String(value == null ? "" : value);
+            return node.innerHTML;
+        }
+        function showSupportFallback(label, message) {
+            var modal = document.createElement("div");
+            modal.className = "support-modal";
+            modal.innerHTML = '<div><strong>' + esc(label || 'Support') + '</strong><p>' + esc(message) + '</p><button type="button" class="copy-btn">Copy</button><button type="button" class="close-btn">OK</button></div>';
+            document.body.appendChild(modal);
+            modal.querySelector(".copy-btn").onclick = function () {
+                if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(message);
+            };
+            modal.querySelector(".close-btn").onclick = function () { modal.parentNode.removeChild(modal); };
+        }
+        Array.prototype.slice.call(document.querySelectorAll(".external-support")).forEach(function (node) {
+            node.addEventListener("click", function (event) {
+                event.preventDefault();
+                var opened = window.open(node.href, "_blank");
+                setTimeout(function () {
+                    if (!opened || opened.closed) showSupportFallback(node.getAttribute("data-label"), node.getAttribute("data-fallback") || node.href);
+                }, 300);
+            });
+        });
+        document.getElementById("registerForm").addEventListener("submit", function (event) {
+            event.preventDefault();
+            var form = event.currentTarget;
+            var data = new FormData(form);
+            var password = String(data.get("password") || "");
+            if (password !== String(data.get("cpassword") || "")) {
+                alert("Password confirmation does not match.");
+                return;
+            }
+            api("/portal/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    fullName: String(data.get("name") || "").trim(),
+                    phone: String(data.get("phone") || "").trim(),
+                    email: String(data.get("email") || "").trim(),
+                    password: password,
+                    trial: qs.get("trial") === "1",
+                    mac: "$(mac)",
+                    ip: "$(ip)"
+                })
+            }).then(function (result) {
+                var username = result.username || result.phone || String(data.get("phone") || "").trim();
+                var pass = result.password || password;
+                localStorage.setItem("skynity_username", username);
+                localStorage.setItem("skynity_password", pass);
+                connect(username, pass);
+            }).catch(function (error) {
+                alert(error.message || "Registration failed.");
+            });
+        });
+        }());
+    </script>
+</body>
+</html>

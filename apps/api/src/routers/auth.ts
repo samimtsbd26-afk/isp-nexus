@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { router, publicProcedure, authedProcedure, adminProcedure } from "../middleware.js";
 import { users, organizations, refreshTokens } from "@isp-nexus/db";
 import { hashPassword, verifyPassword } from "../lib/crypto.js";

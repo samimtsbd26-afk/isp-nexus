@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and, gte, desc } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { resourceSnapshots, bandwidthSnapshots, pingSnapshots, sfpSnapshots, pingTargets, routers } from "@isp-nexus/db";
+import { alertLogs, resourceSnapshots, bandwidthSnapshots, pingSnapshots, sfpSnapshots, pingTargets, routers } from "@isp-nexus/db";
 import { pingTargetSchema } from "@isp-nexus/shared";
 
 async function assertRouterAccess(ctx: { db: any; orgId: string }, routerId: string): Promise<void> {
@@ -56,6 +56,16 @@ export const monitoringRouter = router({
     .query(async ({ ctx, input }) => {
       return ctx.db.select().from(pingTargets)
         .where(and(eq(pingTargets.routerId, input.routerId), eq(pingTargets.orgId, ctx.orgId)));
+    }),
+
+  getAlerts: authedProcedure
+    .input(z.object({ routerId: z.string().uuid(), limit: z.number().int().min(1).max(50).default(10) }))
+    .query(async ({ ctx, input }) => {
+      await assertRouterAccess(ctx, input.routerId);
+      return ctx.db.select().from(alertLogs)
+        .where(and(eq(alertLogs.routerId, input.routerId), eq(alertLogs.orgId, ctx.orgId), eq(alertLogs.resolved, false)))
+        .orderBy(desc(alertLogs.createdAt))
+        .limit(input.limit);
     }),
 
   createPingTarget: adminProcedure.input(pingTargetSchema).mutation(async ({ ctx, input }) => {

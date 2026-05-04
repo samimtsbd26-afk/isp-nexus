@@ -77,3 +77,25 @@ CREATE TABLE IF NOT EXISTS radacct (
 CREATE INDEX IF NOT EXISTS radacct_username ON radacct (username);
 CREATE INDEX IF NOT EXISTS radacct_nasipaddress ON radacct (nasipaddress);
 CREATE INDEX IF NOT EXISTS radacct_acctstarttime ON radacct (acctstarttime);
+
+CREATE TABLE IF NOT EXISTS radpostauth (
+  id BIGSERIAL PRIMARY KEY,
+  username VARCHAR(64) NOT NULL DEFAULT '',
+  pass VARCHAR(64) NOT NULL DEFAULT '',
+  reply VARCHAR(32) NOT NULL DEFAULT '',
+  authdate TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS radpostauth_username ON radpostauth (username);
+
+CREATE TABLE IF NOT EXISTS nas (
+  id SERIAL PRIMARY KEY,
+  nasname VARCHAR(128) NOT NULL,
+  shortname VARCHAR(32),
+  type VARCHAR(30) DEFAULT 'other',
+  ports INT,
+  secret VARCHAR(60) NOT NULL DEFAULT 'secret',
+  server VARCHAR(64),
+  community VARCHAR(50),
+  description VARCHAR(200) DEFAULT 'RADIUS Client'
+);
+CREATE INDEX IF NOT EXISTS nas_nasname ON nas (nasname);

@@ -1,0 +1,112 @@
+<html>
+<head>
+    <title>Status - Skynity ISP</title>
+    <!-- $(if refresh-timeout) -->
+    <meta http-equiv="refresh" content="$(refresh-timeout-secs)">
+    <!-- $(endif) -->
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+    <meta name="viewport" content="width=device-width; initial-scale=1.0; maximum-scale=1.0;"/>
+    <link rel="stylesheet" href="style.css">
+    <script language="JavaScript">
+        <!--
+        $(if advert-pending == 'yes')
+            var popup = '';
+            function focusAdvert() {
+            if (window.focus) popup.focus();
+            }
+            function openAdvert() {
+            popup = open('$(link-advert)', 'hotspot_advert', '');
+            setTimeout("focusAdvert()", 1000);
+            }
+        $(endif)
+        function openLogout() {
+        if (window.name != 'hotspot_status') return true;
+            open('$(link-logout)', 'hotspot_logout', 'toolbar=0,location=0,directories=0,status=0,menubars=0,resizable=1,width=280,height=250');
+        window.close();
+        return false;
+        }
+        //-->
+    </script>
+</head>
+<body bottommargin="0" topmargin="0" leftmargin="0" rightmargin="0"
+<!-- $(if advert-pending == 'yes') -->
+    onLoad="openAdvert()"
+<!-- $(endif) -->
+>
+
+    <div class="bg-stars"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <a href="login.html" class="logo" style="margin:0 auto;">
+                <h1>SKYNITY</h1>
+                <p>POWERED BY STARLINK</p>
+            </a>
+        </header>
+
+        <div class="auth-box">
+            <h2>Connection Status</h2>
+
+            <div style="text-align: center; margin-bottom: 20px;">
+                <div style="width: 80px; height: 80px; border-radius: 50%; background: rgba(0,255,102,0.1); border: 2px solid var(--green); display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; box-shadow: 0 0 20px rgba(0,255,102,0.2);">
+                    CONNECTED
+                </div>
+                <h3 style="color: var(--green);">CONNECTED</h3>
+                <p style="font-size: 0.8rem; color: var(--text-muted);">Welcome, $(username)</p>
+            </div>
+
+            <form action="$(link-logout)" name="logout" onSubmit="return openLogout()">
+                <table class="status-table">
+                    <tr>
+                        <th>◎ IP Address</th>
+                        <td>$(ip)</td>
+                    </tr>
+                    <tr>
+                        <th> Bytes Up</th>
+                        <td>$(bytes-in-nice)</td>
+                    </tr>
+                    <tr>
+                        <th> Bytes Down</th>
+                        <td>$(bytes-out-nice)</td>
+                    </tr>
+                    <tr>
+                        <th> Connected</th>
+                        <td>$(uptime)</td>
+                    </tr>
+                    <!-- $(if limit-uptime) -->
+                    <tr>
+                        <th> Remaining</th>
+                        <td>$(limit-uptime)</td>
+                    </tr>
+                    <!-- $(endif) -->
+                    <!-- $(if session-time-left) -->
+                    <tr>
+                        <th> Time Left</th>
+                        <td>$(session-time-left)</td>
+                    </tr>
+                    <!-- $(endif) -->
+                    <!-- $(if limit-bytes-total) -->
+                    <tr>
+                        <th> Quota</th>
+                        <td>$(limit-bytes-total-nice)</td>
+                    </tr>
+                    <!-- $(endif) -->
+                    <!-- $(if limit-bytes-out) -->
+                    <tr>
+                        <th> Download Limit</th>
+                        <td>$(limit-bytes-out-nice)</td>
+                    </tr>
+                    <!-- $(endif) -->
+                </table>
+
+                <button type="submit" class="auth-btn" style="background: linear-gradient(90deg, #ff416c 0%, #ff4b2b 100%);">LOGOUT</button>
+            </form>
+        </div>
+
+        <div class="copyright">
+            © 2026 SKYNITY • Powered by STARLINK • All rights reserved.
+        </div>
+    </div>
+</body>
+</html>

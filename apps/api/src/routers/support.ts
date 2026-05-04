@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and, desc } from "drizzle-orm";
-import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { supportTickets, supportMessages } from "@isp-nexus/db";
+import { router, adminProcedure } from "../middleware.js";
+import { supportTickets, supportMessages, users } from "@isp-nexus/db";
 
 export const supportRouter = router({
   listTickets: adminProcedure
@@ -25,6 +25,9 @@ export const supportRouter = router({
   assignTicket: adminProcedure
     .input(z.object({ id: z.string().uuid(), userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
+      const [assignee] = await ctx.db.select({ id: users.id }).from(users)
+        .where(and(eq(users.id, input.userId), eq(users.orgId, ctx.orgId), eq(users.isActive, true))).limit(1);
+      if (!assignee) throw new TRPCError({ code: "NOT_FOUND", message: "Assignee not found" });
       await ctx.db.update(supportTickets).set({ assignedTo: input.userId, updatedAt: new Date() })
         .where(and(eq(supportTickets.id, input.id), eq(supportTickets.orgId, ctx.orgId)));
       return { ok: true };
@@ -37,7 +40,7 @@ export const supportRouter = router({
     return { ok: true };
   }),
 
-  sendMessage: authedProcedure
+  sendMessage: adminProcedure
     .input(z.object({ ticketId: z.string().uuid(), message: z.string().min(1), senderType: z.enum(["admin", "customer"]) }))
     .mutation(async ({ ctx, input }) => {
       const [ticket] = await ctx.db.select({ id: supportTickets.id }).from(supportTickets)

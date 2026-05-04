@@ -6,6 +6,13 @@ import { Card, CardContent, Button, Input, Modal, Badge, Empty } from "../compon
 
 const EMPTY = { name: "", type: "pppoe" as const, downloadMbps: 10, uploadMbps: 5, priceBdt: 0, validityDays: 30, mikrotikProfileName: "default", description: "", sortOrder: 0 };
 
+function deviceLimit(features: unknown) {
+  const items = Array.isArray(features) ? features.map(String) : [];
+  const feature = items.find((item) => /^devices:/i.test(item) || /\bdevices?\b/i.test(item));
+  const match = feature?.match(/(\d+)/);
+  return Math.max(1, Number(match?.[1] ?? 1));
+}
+
 export default function Packages() {
   const { data, refetch, isLoading } = trpc.package.listAll.useQuery();
   const [showAdd, setShowAdd] = useState(false);
@@ -59,14 +66,15 @@ export default function Packages() {
                 <p className="text-2xl font-bold text-primary">৳{pkg.priceBdt.toLocaleString()}</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                 {[
-                  { label: "Download", value: `${pkg.downloadMbps}M` },
-                  { label: "Upload", value: `${pkg.uploadMbps}M` },
-                  { label: "Validity", value: `${pkg.validityDays}d` },
+                  { label: "Speed", value: `${pkg.downloadMbps}M/${pkg.uploadMbps}M` },
+                  { label: "Devices", value: `${deviceLimit(pkg.features)}` },
+                  { label: "Duration", value: `${pkg.validityDays}d` },
+                  { label: "Profile", value: pkg.mikrotikProfileName ?? "default" },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-secondary/50 rounded-lg p-2">
-                    <p className="text-xs font-bold">{value}</p>
+                    <p className="text-xs font-bold truncate">{value}</p>
                     <p className="text-[10px] text-muted-foreground">{label}</p>
                   </div>
                 ))}

@@ -27,16 +27,12 @@ export default function Backup() {
     onError: (e) => toast.error(e.message),
   });
 
-  const { data: contentData, refetch: fetchContent } = trpc.backup.getContent.useQuery(
-    { id: "" },
-    { enabled: false },
-  );
-
   function downloadContent(id: string, filename: string) {
     // Fetch content and trigger browser download
     void (async () => {
       try {
-        const result = await fetch(`/api/trpc/backup.getContent?input=${encodeURIComponent(JSON.stringify({ id }))}`, {
+        const input = encodeURIComponent(JSON.stringify({ json: { id } }));
+        const result = await fetch(`/api/trpc/backup.getContent?input=${input}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem("isp_access_token")}` },
         });
         const json = await result.json();

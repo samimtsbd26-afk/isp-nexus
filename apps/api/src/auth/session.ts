@@ -5,6 +5,28 @@ import type { SessionPayload, PortalSessionPayload } from "@isp-nexus/shared";
 
 const ACCESS_SECRET = new TextEncoder().encode(env.JWT_SECRET);
 const PORTAL_SECRET = new TextEncoder().encode(env.PORTAL_JWT_SECRET);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const USER_ROLES = new Set(["superadmin", "admin", "reseller", "viewer"]);
+
+function isSessionPayload(payload: unknown): payload is SessionPayload {
+  const value = payload as Partial<SessionPayload>;
+  return value?.type === "admin"
+    && typeof value.userId === "string"
+    && UUID_RE.test(value.userId)
+    && typeof value.orgId === "string"
+    && UUID_RE.test(value.orgId)
+    && typeof value.role === "string"
+    && USER_ROLES.has(value.role);
+}
+
+function isPortalSessionPayload(payload: unknown): payload is PortalSessionPayload {
+  const value = payload as Partial<PortalSessionPayload>;
+  return value?.type === "portal"
+    && typeof value.customerId === "string"
+    && UUID_RE.test(value.customerId)
+    && typeof value.orgId === "string"
+    && UUID_RE.test(value.orgId);
+}
 
 export async function signAccessToken(payload: SessionPayload): Promise<string> {
   return new SignJWT({ ...payload })
@@ -17,7 +39,7 @@ export async function signAccessToken(payload: SessionPayload): Promise<string> 
 export async function verifyAccessToken(token: string): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, ACCESS_SECRET);
-    return payload as unknown as SessionPayload;
+    return isSessionPayload(payload) ? payload : null;
   } catch {
     return null;
   }
@@ -42,7 +64,7 @@ export async function signPortalToken(payload: PortalSessionPayload): Promise<st
 export async function verifyPortalToken(token: string): Promise<PortalSessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, PORTAL_SECRET);
-    return payload as unknown as PortalSessionPayload;
+    return isPortalSessionPayload(payload) ? payload : null;
   } catch {
     return null;
   }

@@ -19,6 +19,7 @@ const schema = z.object({
   PORTAL_JWT_SECRET: z.string().min(16, "PORTAL_JWT_SECRET must be at least 16 chars"),
   ENCRYPTION_KEY: z.string().min(32, "ENCRYPTION_KEY must be at least 32 hex chars"),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_ADMIN_CHAT_IDS: z.string().optional(),
   MIKROTIK_DEFAULT_API_PORT: z.coerce.number().default(8728),
   MIKROTIK_API_TIMEOUT_MS: z.coerce.number().default(5000),
   MIKROTIK_MOCK: z.string().default("false"),

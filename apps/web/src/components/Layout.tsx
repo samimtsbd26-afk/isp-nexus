@@ -9,6 +9,7 @@ import {
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
 import { cn } from "../lib/utils";
+import { clearAccessToken } from "../lib/auth";
 
 interface NavItem { label: string; to: string; icon: React.ComponentType<{ size?: number; className?: string }> }
 interface NavSection { title: string; items: NavItem[] }
@@ -135,12 +136,12 @@ export default function Layout() {
   const { data: me } = trpc.auth.me.useQuery();
   const logout = trpc.auth.logout.useMutation({
     onSuccess: () => {
-      localStorage.removeItem("isp_access_token");
+      clearAccessToken();
       window.location.href = "/login";
     },
     onError: () => {
       // Even if API fails, clear local token and force reload
-      localStorage.removeItem("isp_access_token");
+      clearAccessToken();
       window.location.href = "/login";
     },
   });

@@ -26,6 +26,10 @@ function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
+function formatMbps(value: number | undefined | null): string {
+  return `${Number(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} Mbps`;
+}
+
 function RouterHealthCard({ router: r }: {
   router: {
     id: string; name: string; host: string; isActive: boolean;
@@ -141,7 +145,7 @@ export default function Dashboard() {
         <StatCard
           label="Active Subscriptions"
           value={v(stats?.activeSubscriptions)}
-          sub={`PPPoE: ${stats?.pppoeActive ?? 0} · Hotspot: ${stats?.hotspotActive ?? 0}`}
+          sub={`PPPoE active: ${stats?.pppoeActive ?? 0} · Hotspot registered: ${stats?.hotspotActive ?? 0}`}
           icon={<Server size={18} />}
           gradient="bg-gradient-to-br from-emerald-500 to-teal-600"
         />
@@ -195,7 +199,16 @@ export default function Dashboard() {
             <Wifi size={18} className="text-amber-400" />
           </div>
           <div>
-            <p className="text-2xl font-bold">{stats?.hotspotActive ?? 0}</p>
+            <p className="text-2xl font-bold">{liveStats?.hotspotUserCount ?? stats?.hotspotActive ?? 0}</p>
+            <p className="text-xs text-muted-foreground">Hotspot Registered</p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-emerald-500/10">
+            <Wifi size={18} className="text-emerald-400" />
+          </div>
+          <div>
+            <p className="text-2xl font-bold">{liveStats?.activeHotspotCount ?? 0}</p>
             <p className="text-xs text-muted-foreground">Hotspot Active</p>
           </div>
         </div>
@@ -246,7 +259,8 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
             {[
               { label: "PPPoE Active", value: liveStats.activePppoeCount, icon: Network, color: "text-blue-400", bg: "bg-blue-500/10" },
-              { label: "Hotspot Active", value: liveStats.activeHotspotCount, icon: Wifi, color: "text-amber-400", bg: "bg-amber-500/10" },
+              { label: "Hotspot Registered", value: liveStats.hotspotUserCount, icon: Wifi, color: "text-amber-400", bg: "bg-amber-500/10" },
+              { label: "Hotspot Active", value: liveStats.activeHotspotCount, icon: Wifi, color: "text-emerald-400", bg: "bg-emerald-500/10" },
               { label: "CPU Load", value: liveStats.cpuLoad != null ? `${liveStats.cpuLoad}%` : "—", icon: Activity, color: "text-emerald-400", bg: "bg-emerald-500/10" },
               { label: "Memory", value: liveStats.totalMemoryMb ? `${Math.round(((liveStats.totalMemoryMb - (liveStats.freeMemoryMb ?? 0)) / liveStats.totalMemoryMb) * 100)}%` : "—", icon: MemoryStick, color: "text-purple-400", bg: "bg-purple-500/10" },
               { label: "Interfaces", value: `${liveStats.runningInterfaceCount}/${liveStats.interfaceCount}`, icon: Router, color: "text-cyan-400", bg: "bg-cyan-500/10" },
@@ -263,6 +277,45 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
+
+          {liveStats.sharedBandwidth && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Shared Bandwidth Pool</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  {[
+                    { label: "Total Pool", value: formatMbps(liveStats.sharedBandwidth.totalPoolMbps) },
+                    { label: "Active Users", value: liveStats.sharedBandwidth.activeUsers },
+                    { label: "Current Usage", value: formatMbps(liveStats.sharedBandwidth.currentSharedUsageMbps) },
+                    { label: "Burst Users", value: liveStats.sharedBandwidth.burstUsers },
+                    { label: "Available Pool", value: formatMbps(liveStats.sharedBandwidth.availablePoolMbps) },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="rounded-lg bg-secondary/50 border border-border p-3">
+                      <p className="text-base font-bold">{value}</p>
+                      <p className="text-[10px] text-muted-foreground">{label}</p>
+                    </div>
+                  ))}
+                </div>
+                {liveStats.sharedBandwidth.packageUtilization.length > 0 ? (
+                  <div className="space-y-2">
+                    {liveStats.sharedBandwidth.packageUtilization.map((pkg: any) => (
+                      <div key={pkg.profile} className="flex items-center gap-3 text-xs">
+                        <span className="w-36 truncate font-medium">{pkg.profile}</span>
+                        <span className="text-muted-foreground">{pkg.activeUsers} active</span>
+                        <span className="ml-auto text-muted-foreground">
+                          {formatBytes(pkg.bytesIn + pkg.bytesOut)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No active hotspot sessions in the shared pool.</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Interface traffic mini table */}
           {liveStats.interfaces && liveStats.interfaces.length > 0 && (

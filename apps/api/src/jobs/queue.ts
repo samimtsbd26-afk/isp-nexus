@@ -3,37 +3,102 @@ import { getBullRedis } from "../lib/redis.js";
 import { logger } from "../lib/logger.js";
 import { createDb } from "@isp-nexus/db";
 import { env } from "../lib/env.js";
-import { resourceSnapshots, bandwidthSnapshots, routers, telegramConfigs, alertLogs } from "@isp-nexus/db";
-import { eq } from "drizzle-orm";
+import {
+  resourceSnapshots,
+  bandwidthSnapshots,
+  pingSnapshots,
+  sfpSnapshots,
+  pingTargets,
+  routers,
+  telegramConfigs,
+  alertLogs,
+} from "@isp-nexus/db";
+import { and, eq } from "drizzle-orm";
 import { decryptText } from "../lib/crypto.js";
 import { getMikroTikClient } from "../services/mikrotik/client.js";
 import { sendAlert } from "../services/telegram/bot.js";
 
-const connection = { connection: getBullRedis() };
+function getQueueConnection() {
+  return { connection: getBullRedis() };
+}
 
-export const monitoringQueue = new Queue("monitoring", connection);
-export const alertsQueue = new Queue("alerts", connection);
+export function getMonitoringQueue(): Queue {
+  return new Queue("monitoring", getQueueConnection());
+}
+
+export function getAlertsQueue(): Queue {
+  return new Queue("alerts", getQueueConnection());
+}
+
+type MonitoringEvent = "resource:update" | "bandwidth:update" | "alert:new";
+type MonitoringEmitter = (room: string, event: MonitoringEvent, payload: unknown) => void;
+
+let emitMonitoring: MonitoringEmitter | null = null;
+
+export function setMonitoringEmitter(emitter: MonitoringEmitter): void {
+  emitMonitoring = emitter;
+}
+
+function numberFrom(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function integerFrom(value: unknown): number {
+  return Math.round(numberFrom(value) ?? 0);
+}
+
+function interfaceName(row: Record<string, any>): string | null {
+  return row.name ?? row.interface ?? row["interface-name"] ?? null;
+}
+
+function trafficRate(row: Record<string, any>, dashed: string, camel: string): number {
+  return integerFrom(row[dashed] ?? row[camel]);
+}
+
+function parsePingSummary(rows: Record<string, any>[]): {
+  avgMs: number | null;
+  minMs: number | null;
+  maxMs: number | null;
+  packetLossPct: number | null;
+} {
+  const summary = rows.find((row) => row["packet-loss"] != null || row.packetLoss != null) ?? rows.at(-1);
+  const timeValues = rows
+    .map((row) => numberFrom(row.time ?? row["time-ms"] ?? row.timeMs))
+    .filter((value): value is number => value != null);
+
+  return {
+    avgMs: numberFrom(summary?.["avg-rtt"] ?? summary?.avgRtt) ?? (timeValues.length ? timeValues.reduce((sum, value) => sum + value, 0) / timeValues.length : null),
+    minMs: numberFrom(summary?.["min-rtt"] ?? summary?.minRtt) ?? (timeValues.length ? Math.min(...timeValues) : null),
+    maxMs: numberFrom(summary?.["max-rtt"] ?? summary?.maxRtt) ?? (timeValues.length ? Math.max(...timeValues) : null),
+    packetLossPct: numberFrom(summary?.["packet-loss"] ?? summary?.packetLoss),
+  };
+}
 
 export function startMonitoringWorker(): Worker {
   const db = createDb(env.DATABASE_URL);
   return new Worker("monitoring", async (job) => {
     const allRouters = await db.select().from(routers).where(eq(routers.isActive, true));
+    logger.info({ jobId: job.id, routers: allRouters.length }, "Monitoring job started");
     for (const r of allRouters) {
+      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
       try {
         const password = decryptText(r.passwordEncrypted);
         const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        const client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
         const [res] = await client.print("/system/resource");
-        const [health] = await client.print("/system/health");
-        const interfaces = await client.exec("/interface", "monitor-traffic", { interface: "all", once: "" });
-        await client.close();
+        const [health] = await client.print("/system/health").catch((err) => {
+          logger.warn({ err, routerId: r.id }, "Router health fetch failed");
+          return [];
+        });
 
-        const freeMemMb = Math.round(parseInt(res?.["free-memory"] || res?.freeMemory || "0") / 1048576);
-        const totalMemMb = Math.round(parseInt(res?.["total-memory"] || res?.totalMemory || "0") / 1048576);
-        const cpuLoad = parseInt(res?.["cpu-load"] || res?.cpuLoad || "0");
-        const tempC = parseFloat(health?.temperature || "0") || null;
-        const voltV = parseFloat(health?.voltage || "0") || null;
-        const uptime = parseInt(res?.["uptime-seconds"] || res?.uptimeSeconds || "0");
+        const freeMemMb = Math.round(integerFrom(res?.["free-memory"] ?? res?.freeMemory) / 1048576);
+        const totalMemMb = Math.round(integerFrom(res?.["total-memory"] ?? res?.totalMemory) / 1048576);
+        const cpuLoad = integerFrom(res?.["cpu-load"] ?? res?.cpuLoad);
+        const tempC = numberFrom(health?.temperature);
+        const voltV = numberFrom(health?.voltage);
+        const uptime = integerFrom(res?.["uptime-seconds"] ?? res?.uptimeSeconds);
 
         await db.insert(resourceSnapshots).values({
           routerId: r.id, cpuLoadPct: cpuLoad, freeMemoryMb: freeMemMb,
@@ -43,19 +108,91 @@ export function startMonitoringWorker(): Worker {
         await db.update(routers).set({ cpuLoad, freeMemoryMb: freeMemMb, temperatureCelsius: tempC, lastSeenAt: new Date() })
           .where(eq(routers.id, r.id));
 
+        emitMonitoring?.(`router:${r.id}`, "resource:update", {
+          routerId: r.id,
+          cpuLoadPct: cpuLoad,
+          freeMemoryMb: freeMemMb,
+          totalMemoryMb: totalMemMb,
+          temperatureC: tempC ?? undefined,
+          voltageV: voltV ?? undefined,
+        });
+
+        const interfaces = await client.print("/interface");
+        const liveInterfaces: Array<{ name: string; rxBps: number; txBps: number }> = [];
         for (const iface of interfaces) {
-          if (!iface.name) continue;
-          await db.insert(bandwidthSnapshots).values({
-            routerId: r.id, interfaceName: iface.name,
-            rxRateBps: parseInt(iface["rx-bits-per-second"] || iface.rxBitsPerSecond || "0"),
-            txRateBps: parseInt(iface["tx-bits-per-second"] || iface.txBitsPerSecond || "0"),
-          });
+          const name = interfaceName(iface);
+          if (!name) continue;
+          try {
+            const [traffic] = await client.exec("/interface", "monitor-traffic", { interface: name, once: "" });
+            const rxBps = trafficRate(traffic ?? {}, "rx-bits-per-second", "rxBitsPerSecond");
+            const txBps = trafficRate(traffic ?? {}, "tx-bits-per-second", "txBitsPerSecond");
+            liveInterfaces.push({ name, rxBps, txBps });
+            await db.insert(bandwidthSnapshots).values({
+              routerId: r.id, interfaceName: name,
+              rxRateBps: rxBps,
+              txRateBps: txBps,
+            });
+          } catch (err) {
+            logger.warn({ err, routerId: r.id, interfaceName: name }, "Interface traffic fetch failed");
+          }
         }
+        emitMonitoring?.(`router:${r.id}`, "bandwidth:update", { routerId: r.id, interfaces: liveInterfaces });
+
+        const ethernetInterfaces = await client.print("/interface/ethernet").catch(() => []);
+        for (const iface of ethernetInterfaces) {
+          const name = interfaceName(iface);
+          if (!name) continue;
+          try {
+            const [sfp] = await client.exec("/interface/ethernet", "monitor", { numbers: name, once: "" });
+            const rxPowerDbm = numberFrom(sfp?.["sfp-rx-power"] ?? sfp?.sfpRxPower);
+            const txPowerDbm = numberFrom(sfp?.["sfp-tx-power"] ?? sfp?.sfpTxPower);
+            const temperatureC = numberFrom(sfp?.["sfp-temperature"] ?? sfp?.sfpTemperature);
+            const voltageV = numberFrom(sfp?.["sfp-supply-voltage"] ?? sfp?.sfpSupplyVoltage);
+            const currentMa = numberFrom(sfp?.["sfp-tx-bias-current"] ?? sfp?.sfpTxBiasCurrent);
+            const wavelengthNm = numberFrom(sfp?.["sfp-wavelength"] ?? sfp?.sfpWavelength);
+            if (rxPowerDbm == null && txPowerDbm == null && temperatureC == null && voltageV == null && currentMa == null && wavelengthNm == null) continue;
+            await db.insert(sfpSnapshots).values({
+              routerId: r.id,
+              interfaceName: name,
+              rxPowerDbm,
+              txPowerDbm,
+              temperatureC,
+              voltageV,
+              currentMa,
+              wavelengthNm: wavelengthNm == null ? null : Math.round(wavelengthNm),
+            });
+          } catch (err) {
+            logger.warn({ err, routerId: r.id, interfaceName: name }, "SFP fetch failed");
+          }
+        }
+
+        const targets = await db.select().from(pingTargets)
+          .where(and(eq(pingTargets.routerId, r.id), eq(pingTargets.isActive, true)));
+        for (const target of targets) {
+          try {
+            const rows = await client.exec("/", "ping", { address: target.target, count: String(target.count) });
+            const summary = parsePingSummary(rows);
+            await db.insert(pingSnapshots).values({
+              routerId: r.id,
+              targetHost: target.target,
+              ...summary,
+            });
+          } catch (err) {
+            logger.warn({ err, routerId: r.id, target: target.target }, "Ping target fetch failed");
+          }
+        }
+        logger.info({
+          routerId: r.id,
+          interfaces: liveInterfaces.map((iface) => iface.name),
+          pingTargets: targets.length,
+        }, "Monitoring snapshots inserted and emitted");
       } catch (err) {
         logger.warn({ err, routerId: r.id }, "Monitoring job failed for router");
+      } finally {
+        await client?.close().catch((err) => logger.warn({ err, routerId: r.id }, "Router client close failed"));
       }
     }
-  }, connection);
+  }, getQueueConnection());
 }
 
 export function startAlertsWorker(): Worker {
@@ -74,13 +211,27 @@ export function startAlertsWorker(): Worker {
           orgId: r.orgId, routerId: r.id, chatId: cfg.chatId,
           alertType: "cpu", message: msg, severity: "warning",
         });
+        emitMonitoring?.(`router:${r.id}`, "alert:new", {
+          routerId: r.id,
+          routerName: r.name,
+          alertType: "cpu",
+          message: msg,
+          severity: "warning",
+        });
       }
     }
-  }, connection);
+  }, getQueueConnection());
 }
 
 export async function scheduleJobs(): Promise<void> {
-  await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
-  await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
+  const monitoringQueue = getMonitoringQueue();
+  const alertsQueue = getAlertsQueue();
+  try {
+    await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
+    await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
+  } finally {
+    await monitoringQueue.close();
+    await alertsQueue.close();
+  }
   logger.info("BullMQ jobs scheduled");
 }

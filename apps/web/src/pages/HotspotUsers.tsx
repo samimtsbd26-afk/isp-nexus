@@ -28,7 +28,8 @@ export default function HotspotUsers() {
     onError: (e) => toast.error(e.message),
   });
 
-  const activeNames = new Set((active ?? []).map((a: any) => a.user));
+  const activeSessions = active ?? [];
+  const activeNames = new Set(activeSessions.map((a: any) => sessionUsername(a)).filter(Boolean));
   const filtered = (users ?? []).filter((u: any) =>
     !search || u.name?.toLowerCase().includes(search.toLowerCase())
   );
@@ -38,7 +39,7 @@ export default function HotspotUsers() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold">Hotspot Users</h1>
-          <p className="text-muted-foreground text-sm">{active?.length ?? 0} online / {users?.length ?? 0} total</p>
+          <p className="text-muted-foreground text-sm">{activeSessions.length} online / {users?.length ?? 0} total</p>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Select title="Select router" value={selected} onChange={(e) => setRouterId(e.target.value)} className="w-44">
@@ -50,6 +51,12 @@ export default function HotspotUsers() {
         </div>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Hotspot Active</p><p className="text-2xl font-bold">{activeSessions.length}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Online Users</p><p className="text-2xl font-bold">{activeNames.size}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sessions</p><p className="text-2xl font-bold">{activeSessions.length}</p></CardContent></Card>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           {isLoading && <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>}
@@ -59,16 +66,18 @@ export default function HotspotUsers() {
                     <TableRow>
                       <TableHead>Status</TableHead>
                       <TableHead>Username</TableHead>
+                      <TableHead>IP</TableHead>
                       <TableHead>Profile</TableHead>
                       <TableHead>MAC Address</TableHead>
                       <TableHead>Uptime</TableHead>
+                      <TableHead>Session Bytes</TableHead>
                       <TableHead className="w-12"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map((u: any) => {
                       const online = activeNames.has(u.name);
-                      const session = (active ?? []).find((a: any) => a.user === u.name);
+                      const session = activeSessions.find((a: any) => sessionUsername(a) === u.name);
                       return (
                         <TableRow key={u[".id"] ?? u.name}>
                           <TableCell>
@@ -80,9 +89,11 @@ export default function HotspotUsers() {
                             </Badge>
                           </TableCell>
                           <TableCell className="font-mono text-sm font-medium">{u.name}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs font-mono">{sessionIp(session) ?? "—"}</TableCell>
                           <TableCell><Badge variant="outline">{u.profile ?? "default"}</Badge></TableCell>
-                          <TableCell className="text-muted-foreground text-xs font-mono">{u["mac-address"] ?? "—"}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs font-mono">{sessionMac(session) ?? u["mac-address"] ?? "—"}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">{session?.uptime ?? "—"}</TableCell>
+                          <TableCell className="text-muted-foreground text-sm">{sessionBytes(session)}</TableCell>
                           <TableCell>
                             <Button variant="ghost" size="icon"
                               onClick={() => { if (globalThis.confirm(`Delete "${u.name}"?`)) remove.mutate({ routerId: selected, name: u.name }); }}>
@@ -129,4 +140,36 @@ export default function HotspotUsers() {
       </Modal>
     </div>
   );
+}
+
+function sessionUsername(session: any): string {
+  return String(session?.user ?? session?.name ?? session?.username ?? "");
+}
+
+function sessionIp(session: any): string | null {
+  return session?.address ?? session?.["ip-address"] ?? null;
+}
+
+function sessionMac(session: any): string | null {
+  return session?.["mac-address"] ?? session?.macAddress ?? null;
+}
+
+function sessionBytes(session: any): string {
+  if (!session) return "—";
+  const incoming = Number(session["bytes-in"] ?? session.bytesIn ?? 0);
+  const outgoing = Number(session["bytes-out"] ?? session.bytesOut ?? 0);
+  const total = incoming + outgoing;
+  return total > 0 ? `${formatBytes(total)} (${formatBytes(incoming)} in / ${formatBytes(outgoing)} out)` : "—";
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = value;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
