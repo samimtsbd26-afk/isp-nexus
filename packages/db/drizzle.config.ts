@@ -7,4 +7,6 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
+  // Exclude FreeRADIUS tables managed separately via infrastructure/radius/sql/schema.sql
+  tablesFilter: ["!radcheck", "!radreply", "!radgroupcheck", "!radgroupreply", "!radusergroup", "!radacct", "!radpostauth", "!nas"],
 });
