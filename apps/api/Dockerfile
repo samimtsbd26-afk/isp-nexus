@@ -23,6 +23,7 @@ FROM node:22-alpine AS runner
 RUN npm install -g tsx && addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 COPY --from=build --chown=appuser:appgroup /app/apps/api/dist ./dist
+COPY --from=build --chown=appuser:appgroup /app/apps/api/package.json ./package.json
 COPY --from=build --chown=appuser:appgroup /app/node_modules ./node_modules
 COPY --from=build --chown=appuser:appgroup /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=build --chown=appuser:appgroup /app/packages/shared/node_modules ./packages/shared/node_modules
