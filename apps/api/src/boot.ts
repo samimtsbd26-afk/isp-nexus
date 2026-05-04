@@ -81,7 +81,11 @@ export { io };
 
 async function bootstrap() {
   if (env.NODE_ENV === "production") {
-    await initBot();
+    try {
+      await initBot();
+    } catch (err) {
+      logger.warn({ err }, "Telegram bot failed to start — check TELEGRAM_BOT_TOKEN in .env");
+    }
     const mWorker = startMonitoringWorker();
     const aWorker = startAlertsWorker();
     await scheduleJobs();
