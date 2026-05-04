@@ -9,4 +9,4 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/portal/package.json ./apps/portal/
 RUN pnpm install --no-frozen-lockfile
 COPY packages/ ./packages/
-CMD ["pnpm", "--filter", "@isp-nexus/db", "db:push"]
+CMD ["sh", "-c", "yes '' | pnpm --filter @isp-nexus/db db:push"]
