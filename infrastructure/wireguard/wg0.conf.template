@@ -1,0 +1,17 @@
+# WireGuard Server Config — ISP Nexus
+# Starlink CGNAT bypass — runs on VPS, MikroTik connects as peer
+
+[Interface]
+Address = 10.100.0.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+
+# PostUp/PostDown for NAT
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+
+# MikroTik Router Peer
+[Peer]
+PublicKey = <MIKROTIK_PUBLIC_KEY>
+AllowedIPs = 10.100.0.2/32
+PersistentKeepalive = 25

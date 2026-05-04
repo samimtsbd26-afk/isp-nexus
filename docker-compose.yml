@@ -1,0 +1,197 @@
+services:
+  # ─── Application Services ─────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-isp_nexus_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-isp_nexus}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      PORTAL_JWT_SECRET: ${PORTAL_JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CUSTOMER_BOT_TOKEN: ${TELEGRAM_CUSTOMER_BOT_TOKEN:-}
+      TELEGRAM_ADMIN_CHAT_IDS: ${TELEGRAM_ADMIN_CHAT_IDS:-}
+      PORT_API: "3001"
+      API_URL: ${API_URL:-https://api.skynity.org}
+      APP_URL: ${APP_URL:-https://admin.skynity.org}
+      PORTAL_URL: ${PORTAL_URL:-https://wifi.skynity.org}
+      HOTSPOT_URL: ${HOTSPOT_URL:-https://hotspot.skynity.org}
+      HOTSPOT_DNS_NAME: ${HOTSPOT_DNS_NAME:-hotspot.skynity.org}
+      RADIUS_HOST: ${RADIUS_HOST:-freeradius}
+      RADIUS_SECRET: ${RADIUS_SECRET:-}
+      RADIUS_AUTH_PORT: ${RADIUS_AUTH_PORT:-1812}
+      RADIUS_ACCT_PORT: ${RADIUS_ACCT_PORT:-1813}
+      MIKROTIK_DEFAULT_API_PORT: ${MIKROTIK_DEFAULT_API_PORT:-8728}
+      MIKROTIK_DEFAULT_SSL_PORT: ${MIKROTIK_DEFAULT_SSL_PORT:-8729}
+      MIKROTIK_API_TIMEOUT_MS: ${MIKROTIK_API_TIMEOUT_MS:-5000}
+      MIKROTIK_MOCK: ${MIKROTIK_MOCK:-false}
+      BKASH_NUMBER: ${BKASH_NUMBER:-}
+      NAGAD_NUMBER: ${NAGAD_NUMBER:-}
+      ROCKET_NUMBER: ${ROCKET_NUMBER:-}
+      BKASH_APP_KEY: ${BKASH_APP_KEY:-}
+      BKASH_APP_SECRET: ${BKASH_APP_SECRET:-}
+      BKASH_WEBHOOK_SECRET: ${BKASH_WEBHOOK_SECRET:-}
+      NAGAD_WEBHOOK_SECRET: ${NAGAD_WEBHOOK_SECRET:-}
+      BOOTSTRAP_ORG_NAME: ${BOOTSTRAP_ORG_NAME:-Skynity ISP}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@skynity.org}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
+    networks:
+      - isp-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  db-migrator:
+    build:
+      context: .
+      dockerfile: apps/db-migrator/Dockerfile
+    restart: "no"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-isp_nexus_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-isp_nexus}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - isp-net
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    networks:
+      - isp-net
+
+  portal:
+    build:
+      context: .
+      dockerfile: apps/portal/Dockerfile
+    restart: unless-stopped
+    networks:
+      - isp-net
+
+  # ─── Reverse Proxy ────────────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./apps/hotspot:/srv/hotspot:ro
+    environment:
+      SSL_EMAIL: ${SSL_EMAIL:-admin@skynity.org}
+    depends_on:
+      - api
+      - web
+      - portal
+    networks:
+      - isp-net
+
+  # ─── Database ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-isp_nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-isp_nexus_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/radius/sql/schema.sql:/docker-entrypoint-initdb.d/01-radius.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      - isp-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-isp_nexus_user} -d ${POSTGRES_DB:-isp_nexus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Cache / Queue ────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - isp-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── RADIUS ───────────────────────────────────────────────────────────────
+  # Start with: docker compose --profile radius up -d
+  freeradius:
+    image: freeradius/freeradius-server:latest
+    profiles: [radius]
+    restart: unless-stopped
+    ports:
+      - "1812:1812/udp"
+      - "1813:1813/udp"
+    volumes:
+      - ./infrastructure/radius/config:/etc/freeradius/3.0:ro
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-isp_nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-isp_nexus_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      RADIUS_SECRET: ${RADIUS_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - isp-net
+
+  # ─── Optional Tools ───────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4
+    profiles: [tools]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@skynity.org}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    ports:
+      - "127.0.0.1:5050:80"
+    networks:
+      - isp-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  isp-net:
+    driver: bridge

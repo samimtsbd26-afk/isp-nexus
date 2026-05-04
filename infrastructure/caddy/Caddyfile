@@ -1,0 +1,67 @@
+# ISP Nexus — Caddyfile
+# Domains: skynity.org
+# VPS: 46.202.166.89
+
+admin.skynity.org {
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+    
+    handle /socket.io/* {
+        reverse_proxy api:3001
+    }
+    
+    handle {
+        reverse_proxy web:3000
+    }
+    
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+api.skynity.org {
+    encode gzip
+    # WebSocket / Socket.IO support
+    @ws {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @ws api:3001
+    reverse_proxy api:3001
+    header {
+        Access-Control-Allow-Origin "*"
+    }
+}
+
+wifi.skynity.org {
+    reverse_proxy portal:3002
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+    }
+}
+
+hotspot.skynity.org {
+    root * /srv/hotspot
+    file_server
+    encode gzip
+    header {
+        Cache-Control "no-store"
+    }
+}
+
+user.skynity.org {
+    reverse_proxy portal:3002
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+    }
+}

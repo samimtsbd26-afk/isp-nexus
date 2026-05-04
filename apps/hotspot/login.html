@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>My ISP WiFi</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;display:flex;align-items:center;justify-content:center;
+      background:linear-gradient(135deg,#0f172a 0%,#3b82f622 100%);
+      font-family:system-ui,sans-serif;padding:1rem}
+    .card{background:rgba(30,41,59,0.95);border:1px solid #3b82f644;
+      border-radius:1rem;padding:2rem;width:100%;max-width:380px;
+      box-shadow:0 25px 50px rgba(0,0,0,0.5)}
+    .logo{font-size:1.5rem;font-weight:800;color:#3b82f6;margin-bottom:.25rem}
+    label{display:block;font-size:.75rem;font-weight:500;color:#cbd5e1;margin-bottom:.375rem}
+    input{width:100%;background:#1e293b;border:1px solid #334155;border-radius:.5rem;
+      padding:.625rem .875rem;font-size:.875rem;color:#e2e8f0;outline:none;margin-bottom:1rem}
+    input:focus{border-color:#3b82f6}
+    button{width:100%;background:#3b82f6;color:#fff;border:none;border-radius:.5rem;
+      padding:.75rem;font-size:.875rem;font-weight:600;cursor:pointer}
+    .err{color:#f87171;font-size:.8rem;margin-bottom:1rem;padding:.5rem .75rem;
+      background:rgba(248,113,113,.1);border-radius:.375rem;border:1px solid rgba(248,113,113,.3)}
+    .footer{text-align:center;margin-top:1rem;font-size:.75rem;color:#64748b}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🌐 Test ISP</div>
+    <p style="color:#94a3b8;font-size:.875rem;margin-bottom:1.5rem">WiFi Login</p>
+    $(if error)<div class="err">$(error)</div>$(endif)
+    <form action="$(link-login-only)" method="post">
+      <input type="hidden" name="dst" value="$(link-orig)"/>
+      <div><label>Username</label><input type="text" name="username" placeholder="Enter username"/></div>
+      <div><label>Password</label><input type="password" name="password" placeholder="Enter password"/></div>
+      <button type="submit">Connect</button>
+    </form>
+    <p class="footer">Powered by Test ISP</p>
+  </div>
+</body>
+</html>

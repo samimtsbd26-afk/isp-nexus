@@ -1,0 +1,59 @@
+import { z } from "zod";
+import { eq, and, gte, desc } from "drizzle-orm";
+import { router, authedProcedure, adminProcedure } from "../middleware.js";
+import { resourceSnapshots, bandwidthSnapshots, pingSnapshots, sfpSnapshots, pingTargets } from "@isp-nexus/db";
+import { pingTargetSchema } from "@isp-nexus/shared";
+
+export const monitoringRouter = router({
+  getResourceSnapshots: authedProcedure
+    .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
+    .query(async ({ ctx, input }) => {
+      const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
+      return ctx.db.select().from(resourceSnapshots)
+        .where(and(eq(resourceSnapshots.routerId, input.routerId), gte(resourceSnapshots.capturedAt, since)))
+        .orderBy(desc(resourceSnapshots.capturedAt)).limit(360);
+    }),
+
+  getBandwidthSnapshots: authedProcedure
+    .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
+    .query(async ({ ctx, input }) => {
+      const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
+      return ctx.db.select().from(bandwidthSnapshots)
+        .where(and(eq(bandwidthSnapshots.routerId, input.routerId), gte(bandwidthSnapshots.capturedAt, since)))
+        .orderBy(desc(bandwidthSnapshots.capturedAt)).limit(720);
+    }),
+
+  getPingSnapshots: authedProcedure
+    .input(z.object({ routerId: z.string().uuid(), since: z.string().optional() }))
+    .query(async ({ ctx, input }) => {
+      const since = input.since ? new Date(input.since) : new Date(Date.now() - 3600_000);
+      return ctx.db.select().from(pingSnapshots)
+        .where(and(eq(pingSnapshots.routerId, input.routerId), gte(pingSnapshots.capturedAt, since)))
+        .orderBy(desc(pingSnapshots.capturedAt)).limit(360);
+    }),
+
+  getSfpSnapshots: authedProcedure
+    .input(z.object({ routerId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      return ctx.db.select().from(sfpSnapshots)
+        .where(eq(sfpSnapshots.routerId, input.routerId))
+        .orderBy(desc(sfpSnapshots.capturedAt)).limit(100);
+    }),
+
+  getPingTargets: authedProcedure
+    .input(z.object({ routerId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      return ctx.db.select().from(pingTargets)
+        .where(and(eq(pingTargets.routerId, input.routerId), eq(pingTargets.orgId, ctx.orgId)));
+    }),
+
+  createPingTarget: adminProcedure.input(pingTargetSchema).mutation(async ({ ctx, input }) => {
+    const [t] = await ctx.db.insert(pingTargets).values({ orgId: ctx.orgId, ...input }).returning();
+    return t;
+  }),
+
+  deletePingTarget: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
+    await ctx.db.delete(pingTargets).where(and(eq(pingTargets.id, input.id), eq(pingTargets.orgId, ctx.orgId)));
+    return { ok: true };
+  }),
+});

@@ -1,0 +1,47 @@
+{
+  "name": "@isp-nexus/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./router": "./src/router.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/boot.ts",
+    "build": "tsc",
+    "start": "node dist/boot.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@hono/trpc-server": "^0.3.0",
+    "@isp-nexus/db": "workspace:*",
+    "@isp-nexus/shared": "workspace:*",
+    "dotenv": "^16.4.0",
+    "drizzle-orm": "^0.36.0",
+    "postgres": "^3.4.4",
+    "@trpc/server": "^11.0.0",
+    "bullmq": "^5.8.0",
+    "grammy": "^1.26.0",
+    "hono": "^4.6.0",
+    "ioredis": "^5.4.0",
+    "jose": "^5.6.0",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "net-snmp": "^3.15.0",
+    "node-fetch": "^3.3.2",
+    "ping": "^0.4.4",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "routeros-client": "^1.1.2",
+    "socket.io": "^4.7.0",
+    "superjson": "^2.2.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ping": "^0.4.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

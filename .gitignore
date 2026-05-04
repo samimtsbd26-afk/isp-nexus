@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.next/
+build/
+.turbo/
+*.local
+.env
+.env.local
+.env.production
+*.log
+.DS_Store
+Thumbs.db
+# Local deploy script — contains VPS credentials, never commit
+deploy.mjs
+# Claude memory
+.claude/

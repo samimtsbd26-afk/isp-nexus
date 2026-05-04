@@ -1,0 +1,51 @@
+version: "3.9"
+# Local dev — only infrastructure services (DB + Redis)
+# Apps run directly with: pnpm dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: isp_nexus
+      POSTGRES_USER: isp_nexus_user
+      POSTGRES_PASSWORD: devpassword123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U isp_nexus_user -d isp_nexus"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass devredis123
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_local:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "devredis123", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4
+    profiles: [tools]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.dev
+      PGADMIN_DEFAULT_PASSWORD: pgadmin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_local:
+  redis_local:
