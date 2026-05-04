@@ -33,4 +33,4 @@ COPY --from=build --chown=appuser:appgroup /app/packages/shared/src ./packages/s
 COPY --from=build --chown=appuser:appgroup /app/packages/shared/package.json ./packages/shared/
 USER appuser
 EXPOSE 3001
-CMD ["node", "--import", "tsx/esm", "dist/boot.js"]
+CMD ["tsx", "dist/boot.js"]
