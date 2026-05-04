@@ -114,11 +114,23 @@ done
 echo ""
 ok "PostgreSQL ready"
 
-# ─── Run DB migrations ────────────────────────────────────────────────────────
-log "Running database migrations..."
-docker compose exec -T api node --experimental-specifier-resolution=node \
-  -e "import('./dist/boot.js').then(()=>console.log('Migrations done'))" \
-  2>/dev/null || warn "Run migrations manually: docker compose exec api node dist/migrate.js"
+# ─── Wait for db-migrator ─────────────────────────────────────────────────────
+log "Waiting for database migrations to complete..."
+for i in $(seq 1 30); do
+  STATUS=$(docker compose ps db-migrator --format json 2>/dev/null | grep -o '"State":"[^"]*"' | head -1 || echo "")
+  if echo "$STATUS" | grep -q '"exited"'; then
+    EXIT_CODE=$(docker compose ps db-migrator --format json 2>/dev/null | grep -o '"ExitCode":[0-9]*' | head -1 | grep -o '[0-9]*' || echo "1")
+    if [ "$EXIT_CODE" = "0" ]; then
+      ok "Migrations completed successfully"
+      break
+    else
+      err "Migration failed! Check logs: docker compose logs db-migrator"
+    fi
+  fi
+  echo -n "."
+  sleep 3
+done
+echo ""
 
 # ─── Status check ─────────────────────────────────────────────────────────────
 log "Checking service status..."
