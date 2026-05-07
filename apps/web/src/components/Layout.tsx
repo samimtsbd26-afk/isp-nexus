@@ -94,7 +94,7 @@ function NavSectionGroup({ section, collapsed }: Readonly<{ section: NavSection;
     return (
       <div className="py-1">
         {section.items.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.to === "/"}
+          <NavLink key={item.to} to={item.to} end
             title={item.label}
             className={({ isActive }) =>
               cn("flex items-center justify-center h-9 w-9 mx-auto rounded-md transition-colors mb-0.5",
@@ -116,7 +116,7 @@ function NavSectionGroup({ section, collapsed }: Readonly<{ section: NavSection;
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
       </button>
       {open && section.items.map((item) => (
-        <NavLink key={item.to} to={item.to} end={item.to === "/"}
+        <NavLink key={item.to} to={item.to} end
           className={({ isActive }) =>
             cn("flex items-center gap-2.5 px-3 py-1.5 text-sm rounded-md mx-2 mb-0.5 transition-colors",
               isActive

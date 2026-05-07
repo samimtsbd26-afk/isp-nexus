@@ -5,8 +5,8 @@ import {
   CartesianGrid, BarChart, Bar, Legend,
 } from "recharts";
 import { NavLink } from "react-router";
-import { ArrowDown, ArrowUp, Wifi, Network } from "lucide-react";
-import { joinRouter, onEvent } from "../../lib/socket";
+import { ArrowDown, ArrowUp, Wifi, Network, Activity, RefreshCw } from "lucide-react";
+import { getSocket, joinRouter, onEvent, reconnectSocket } from "../../lib/socket";
 import { liveCache, type BwState } from "../../lib/cache";
 
 interface IfaceStats { name: string; rxBps: number; txBps: number }
@@ -39,6 +39,12 @@ export default function BandwidthMonitor() {
   const [routerId, setRouterId] = useState("");
   const selected = routerId || routers?.[0]?.id || "";
 
+  // Socket status indicators
+  const [socketConnected, setSocketConnected] = useState(() => getSocket().connected);
+  const [lastUpdateAt, setLastUpdateAt] = useState<Date | null>(null);
+  const [updateCount, setUpdateCount] = useState(0);
+  const [reconnectCount, setReconnectCount] = useState(0);
+
   // Initialise from module-level cache so tab-switches are instant.
   const [bwState, setBwState] = useState<BwState>(() => fromCache(selected));
   const prevSelectedRef = useRef(selected);
@@ -58,6 +64,23 @@ export default function BandwidthMonitor() {
       if (cached) setBwState(cached);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track socket connection state and reconnects.
+  useEffect(() => {
+    const sock = getSocket();
+    const onConnect = () => setSocketConnected(true);
+    const onDisconnect = () => setSocketConnected(false);
+    const onReconnect = () => setReconnectCount((n) => n + 1);
+    sock.on("connect", onConnect);
+    sock.on("disconnect", onDisconnect);
+    sock.io.on("reconnect", onReconnect);
+    setSocketConnected(sock.connected);
+    return () => {
+      sock.off("connect", onConnect);
+      sock.off("disconnect", onDisconnect);
+      sock.io.off("reconnect", onReconnect);
+    };
   }, []);
 
   useEffect(() => {
@@ -80,6 +103,9 @@ export default function BandwidthMonitor() {
         rx: Math.round(total.rx / 1000),
         tx: Math.round(total.tx / 1000),
       };
+
+      setLastUpdateAt(new Date());
+      setUpdateCount((n) => n + 1);
 
       setBwState((prev) => {
         const next: BwState = {
@@ -110,16 +136,39 @@ export default function BandwidthMonitor() {
   }));
 
   const hasCachedData = points.length > 0;
+  // Chart renders with 1+ points; 2+ gives a visible line. Show immediately from cache.
+  const chartReady = points.length >= 1;
 
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold">Bandwidth Monitor</h1>
-          {hasCachedData && !live && (
-            <p className="text-xs text-muted-foreground mt-0.5">Showing cached data · waiting for live update…</p>
-          )}
+          {/* Socket status row */}
+          <div className="flex items-center gap-3 mt-1 flex-wrap">
+            <span className={`flex items-center gap-1.5 text-xs font-medium ${socketConnected ? "text-emerald-400" : "text-red-400"}`}>
+              <span className={`w-2 h-2 rounded-full inline-block ${socketConnected ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+              {socketConnected ? "Live" : "Disconnected"}
+            </span>
+            {lastUpdateAt && (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Activity size={11} />
+                {lastUpdateAt.toLocaleTimeString()}
+              </span>
+            )}
+            {updateCount > 0 && (
+              <span className="text-xs text-muted-foreground">{updateCount} packets</span>
+            )}
+            {reconnectCount > 0 && (
+              <span className="flex items-center gap-1 text-xs text-amber-400">
+                <RefreshCw size={11} /> {reconnectCount} reconnect{reconnectCount !== 1 ? "s" : ""}
+              </span>
+            )}
+            {hasCachedData && !live && (
+              <span className="text-xs text-muted-foreground">Cached · waiting for next update…</span>
+            )}
+          </div>
         </div>
         <select
           title="Select router"
@@ -185,8 +234,13 @@ export default function BandwidthMonitor() {
 
       {/* Live Traffic Chart */}
       <div className="bg-card border border-border rounded-xl p-5">
-        <h2 className="text-sm font-medium mb-4">Live Traffic (Kbps) — Real-time</h2>
-        {points.length > 1 ? (
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-medium">Live Traffic (Kbps) — Real-time</h2>
+          {chartReady && (
+            <span className="text-xs text-muted-foreground">{points.length} samples</span>
+          )}
+        </div>
+        {chartReady ? (
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={points}>
               <defs>
@@ -212,16 +266,28 @@ export default function BandwidthMonitor() {
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="py-10 text-center">
-            {/* Skeleton bars shown while waiting */}
+          <div className="py-10 text-center space-y-3">
             <div className="flex items-end justify-center gap-1 h-16 mb-3 opacity-20">
               {Array.from({ length: 20 }).map((_, i) => (
                 <div key={i} className="w-3 bg-emerald-400 rounded-sm animate-pulse"
-                  style={{ height: `${20 + Math.random() * 60}%`, animationDelay: `${i * 50}ms` }} />
+                  style={{ height: `${20 + (i * 13 % 60)}%`, animationDelay: `${i * 50}ms` }} />
               ))}
             </div>
-            <p className="text-muted-foreground text-sm">Waiting for live data via Socket.IO…</p>
-            <span className="text-xs text-muted-foreground opacity-60">Monitoring worker must be running (production mode)</span>
+            <p className="text-muted-foreground text-sm">
+              {socketConnected
+                ? "Socket connected — waiting for first bandwidth:update event…"
+                : "Socket disconnected — check API server and monitoring worker"}
+            </p>
+            <p className="text-xs text-muted-foreground opacity-60">
+              Requires monitoring worker running in API (pnpm start / docker-compose up)
+            </p>
+            {!socketConnected && (
+              <button
+                onClick={() => reconnectSocket()}
+                className="text-xs text-blue-400 hover:underline">
+                Retry connection
+              </button>
+            )}
           </div>
         )}
       </div>

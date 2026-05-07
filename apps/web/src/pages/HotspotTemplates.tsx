@@ -597,6 +597,8 @@ export default function HotspotTemplates() {
   const [tab, setTab] = useState<EditorTab>("visual");
   const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
+  // Preview modal device mode (separate from builder preview mode)
+  const [previewModalDevice, setPreviewModalDevice] = useState<"desktop" | "android" | "captive">("desktop");
   const [routerId, setRouterId] = useState("");
 
   const selectedRouter = routerId
@@ -1000,7 +1002,7 @@ export default function HotspotTemplates() {
                   title="Hotspot live preview"
                   srcDoc={livePreviewDoc}
                   className={`rounded-lg border-2 border-border bg-white transition-all ${previewMode === "mobile" ? "w-[375px] h-[680px]" : "w-full h-full min-h-[500px]"}`}
-                  sandbox="allow-same-origin"
+                  sandbox="allow-scripts allow-same-origin"
                 />
               </div>
             </div>
@@ -1009,29 +1011,76 @@ export default function HotspotTemplates() {
       </Modal>
 
       {/* ── Preview Modal ──────────────────────────────────────────────────── */}
-      <Modal open={!!previewId} onClose={() => setPreviewId(null)} title={`Preview: ${previewTmpl?.name}`} className="max-w-2xl">
-        {previewTmpl && (
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <Button size="sm" variant="outline"
-                onClick={() => update.mutate({ id: previewTmpl.id, isDefault: true })}>
-                <Check size={13} /> Set Default
-              </Button>
-              <Button size="sm" disabled={deploy.isPending || !selectedRouter}
-                onClick={() => deploy.mutate({ id: previewTmpl.id, routerId: selectedRouter })}>
-                <Upload size={13} /> Publish to Router
-              </Button>
+      <Modal open={!!previewId} onClose={() => { setPreviewId(null); setPreviewModalDevice("desktop"); }} title={`Preview: ${previewTmpl?.name ?? ""}`} className="max-w-3xl">
+        {previewTmpl && (() => {
+          // Build preview HTML — always produce valid content, never blank
+          const previewSrcDoc = (() => {
+            if (previewTmpl.htmlContent) {
+              const css = previewTmpl.cssContent ?? "";
+              const html = css
+                ? previewTmpl.htmlContent.replace("</head>", `<style>${css}</style></head>`)
+                : previewTmpl.htmlContent;
+              return html.includes("</html>") ? html : `<html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}</body></html>`;
+            }
+            // No saved HTML — generate from stored template fields
+            return buildPreviewDoc({
+              ...EMPTY_FORM,
+              primaryColor: previewTmpl.primaryColor ?? "#06b6d4",
+              backgroundColor: previewTmpl.backgroundColor ?? "#0c0f1a",
+              companyName: previewTmpl.companyName ?? previewTmpl.name,
+            }, "dark");
+          })();
+
+          const deviceStyles: Record<string, string> = {
+            desktop: "w-full h-[520px]",
+            android: "w-[393px] h-[852px] mx-auto",
+            captive: "w-[375px] h-[600px] mx-auto",
+          };
+
+          return (
+            <div className="space-y-3">
+              {/* Actions */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline"
+                    onClick={() => update.mutate({ id: previewTmpl.id, isDefault: true })}>
+                    <Check size={13} /> Set Default
+                  </Button>
+                  <Button size="sm" disabled={deploy.isPending || !selectedRouter}
+                    onClick={() => deploy.mutate({ id: previewTmpl.id, routerId: selectedRouter })}>
+                    <Upload size={13} /> Publish to Router
+                  </Button>
+                </div>
+                {/* Device switcher */}
+                <div className="flex gap-1 rounded-lg border border-border p-0.5 bg-secondary/30">
+                  {(["desktop", "android", "captive"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setPreviewModalDevice(mode)}
+                      className={`px-2.5 py-1 rounded text-xs transition-colors capitalize ${previewModalDevice === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                      {mode === "captive" ? "Captive" : mode === "android" ? "Android" : "Desktop"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Device frame */}
+              <div className={`overflow-auto rounded-xl border border-border bg-[#111] ${previewModalDevice !== "desktop" ? "flex justify-center p-4" : ""}`}>
+                <iframe
+                  key={`${previewId}-${previewModalDevice}`}
+                  title="Template preview"
+                  srcDoc={previewSrcDoc}
+                  className={`rounded-lg border-2 border-border/50 bg-white ${deviceStyles[previewModalDevice]}`}
+                  sandbox="allow-scripts allow-same-origin"
+                />
+              </div>
+              {previewModalDevice !== "desktop" && (
+                <p className="text-xs text-muted-foreground text-center">
+                  {previewModalDevice === "android" ? "Android phone (393×852)" : "Captive browser (375×600)"}
+                </p>
+              )}
             </div>
-            <iframe title="Template preview"
-              srcDoc={previewTmpl.htmlContent && previewTmpl.cssContent
-                ? previewTmpl.htmlContent.replace("</head>", `<style>${previewTmpl.cssContent}</style></head>`)
-                : buildPreviewDoc({ ...EMPTY_FORM, htmlContent: previewTmpl.htmlContent ?? "", cssContent: previewTmpl.cssContent ?? "", primaryColor: previewTmpl.primaryColor ?? "#06b6d4", backgroundColor: previewTmpl.backgroundColor ?? "#0c0f1a" }, "dark")
-              }
-              className="h-[520px] w-full rounded-lg border border-border bg-white"
-              sandbox="allow-same-origin"
-            />
-          </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* ── Fullscreen Preview ──────────────────────────────────────────────── */}
@@ -1048,8 +1097,9 @@ export default function HotspotTemplates() {
           </div>
           <div className="flex-1 flex items-center justify-center bg-[#111] p-4 overflow-auto">
             <iframe title="Fullscreen preview" srcDoc={livePreviewDoc}
+              key={livePreviewDoc.length}
               className={`bg-white rounded-lg border-2 border-border ${previewMode === "mobile" ? "w-[390px] h-[844px]" : "w-full h-full"}`}
-              sandbox="allow-same-origin"
+              sandbox="allow-scripts allow-same-origin"
             />
           </div>
         </div>
