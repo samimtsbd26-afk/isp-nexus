@@ -34,6 +34,29 @@ function fromCache(routerId: string): BwState {
   };
 }
 
+// Converts DB bandwidth snapshot rows (grouped by ~30s buckets) into chart points
+function dbSnapshotsToPoints(rows: Array<{ interfaceName: string | null; rxRateBps: number | null; txRateBps: number | null; capturedAt: Date | string }>): BwState["points"] {
+  // Group by timestamp bucket (round to nearest 30s)
+  const buckets = new Map<number, { rx: number; tx: number }>();
+  for (const row of rows) {
+    if (!row.interfaceName) continue;
+    const t = new Date(row.capturedAt instanceof Date ? row.capturedAt : String(row.capturedAt)).getTime();
+    const bucket = Math.round(t / 30_000) * 30_000;
+    const cur = buckets.get(bucket) ?? { rx: 0, tx: 0 };
+    cur.rx += row.rxRateBps ?? 0;
+    cur.tx += row.txRateBps ?? 0;
+    buckets.set(bucket, cur);
+  }
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a - b)
+    .slice(-120)
+    .map(([ts, { rx, tx }]) => ({
+      time: new Date(ts).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      rx: Math.round(rx / 1000),
+      tx: Math.round(tx / 1000),
+    }));
+}
+
 export default function BandwidthMonitor() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
@@ -44,14 +67,52 @@ export default function BandwidthMonitor() {
   const [lastUpdateAt, setLastUpdateAt] = useState<Date | null>(null);
   const [updateCount, setUpdateCount] = useState(0);
   const [reconnectCount, setReconnectCount] = useState(0);
+  // Track whether chart was seeded from DB (not just waiting for first socket event)
+  const dbSeededRef = useRef(false);
 
   // Initialise from module-level cache so tab-switches are instant.
   const [bwState, setBwState] = useState<BwState>(() => fromCache(selected));
   const prevSelectedRef = useRef(selected);
 
+  // DB fallback: load last-hour bandwidth snapshots so chart renders immediately
+  // even before any socket event arrives.
+  const { data: dbSnapshots } = trpc.monitoring.getBandwidthSnapshots.useQuery(
+    { routerId: selected },
+    { enabled: !!selected, staleTime: 30_000, refetchOnWindowFocus: false }
+  );
+
+  useEffect(() => {
+    if (!dbSnapshots || dbSnapshots.length === 0 || dbSeededRef.current) return;
+    // Only seed from DB if cache is still empty (no live data yet)
+    if (liveCache.getBandwidth(selected)?.points?.length) return;
+    const pts = dbSnapshotsToPoints(dbSnapshots);
+    if (pts.length === 0) return;
+    const rxVals = pts.map((p) => p.rx * 1000);
+    const txVals = pts.map((p) => p.tx * 1000);
+    const peakRx = Math.max(...rxVals, 0);
+    const peakTx = Math.max(...txVals, 0);
+    // Build ifaceStats from the most recent DB row per interface
+    const latestPerIface = new Map<string, { rxRateBps: number | null; txRateBps: number | null }>();
+    for (const row of dbSnapshots) {
+      if (!row.interfaceName) continue;
+      if (!latestPerIface.has(row.interfaceName)) latestPerIface.set(row.interfaceName, row);
+    }
+    const ifaceStats = Array.from(latestPerIface.entries())
+      .filter(([, r]) => (r.rxRateBps ?? 0) > 0 || (r.txRateBps ?? 0) > 0)
+      .sort(([, a], [, b]) => (b.rxRateBps ?? 0) - (a.rxRateBps ?? 0))
+      .slice(0, 12)
+      .map(([name, r]) => ({ name, rxBps: r.rxRateBps ?? 0, txBps: r.txRateBps ?? 0 }));
+    setBwState((prev) => {
+      if (prev.points.length > 0) return prev; // socket already delivered data
+      return { points: pts, live: null, peakRx, peakTx, ifaceStats };
+    });
+    dbSeededRef.current = true;
+  }, [dbSnapshots, selected]);
+
   // When the selected router changes, load cached data for that router.
   useEffect(() => {
     if (selected && selected !== prevSelectedRef.current) {
+      dbSeededRef.current = false;
       setBwState(fromCache(selected));
       prevSelectedRef.current = selected;
     }
@@ -136,8 +197,10 @@ export default function BandwidthMonitor() {
   }));
 
   const hasCachedData = points.length > 0;
-  // Chart renders with 1+ points; 2+ gives a visible line. Show immediately from cache.
+  // Chart renders with 1+ points (DB-seeded or live). Show immediately — don't wait for 2nd event.
   const chartReady = points.length >= 1;
+  // True once a live socket update has arrived (not just DB-seeded data)
+  const isLive = live !== null || updateCount > 0;
 
   return (
     <div className="space-y-5">
@@ -147,26 +210,47 @@ export default function BandwidthMonitor() {
           <h1 className="text-xl font-semibold">Bandwidth Monitor</h1>
           {/* Socket status row */}
           <div className="flex items-center gap-3 mt-1 flex-wrap">
+            {/* Live/Disconnected indicator */}
             <span className={`flex items-center gap-1.5 text-xs font-medium ${socketConnected ? "text-emerald-400" : "text-red-400"}`}>
-              <span className={`w-2 h-2 rounded-full inline-block ${socketConnected ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
-              {socketConnected ? "Live" : "Disconnected"}
+              <span className={`w-2 h-2 rounded-full inline-block ${socketConnected && isLive ? "bg-emerald-400 animate-pulse" : socketConnected ? "bg-yellow-400 animate-pulse" : "bg-red-400"}`} />
+              {socketConnected ? (isLive ? "Live" : "Connected — waiting…") : "Disconnected"}
             </span>
+            {/* Last update time */}
             {lastUpdateAt && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Activity size={11} />
                 {lastUpdateAt.toLocaleTimeString()}
               </span>
             )}
+            {/* Packet counter */}
             {updateCount > 0 && (
-              <span className="text-xs text-muted-foreground">{updateCount} packets</span>
+              <span className="text-xs text-muted-foreground">{updateCount} event{updateCount !== 1 ? "s" : ""}</span>
             )}
+            {/* Reconnect counter */}
             {reconnectCount > 0 && (
               <span className="flex items-center gap-1 text-xs text-amber-400">
                 <RefreshCw size={11} /> {reconnectCount} reconnect{reconnectCount !== 1 ? "s" : ""}
               </span>
             )}
-            {hasCachedData && !live && (
-              <span className="text-xs text-muted-foreground">Cached · waiting for next update…</span>
+            {/* DB-seeded indicator */}
+            {hasCachedData && !isLive && (
+              <span className="text-xs text-muted-foreground">DB data · awaiting live…</span>
+            )}
+            {/* Router online badge */}
+            {routers && selected && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                routers.find((r) => r.id === selected)?.isActive
+                  ? "text-emerald-400 border-emerald-500/30 bg-emerald-500/10"
+                  : "text-red-400 border-red-500/30 bg-red-500/10"
+              }`}>
+                {routers.find((r) => r.id === selected)?.isActive ? "Router Online" : "Router Offline"}
+              </span>
+            )}
+            {/* Reconnect button when disconnected */}
+            {!socketConnected && (
+              <button onClick={() => reconnectSocket()} className="text-xs text-blue-400 hover:underline flex items-center gap-1">
+                <RefreshCw size={11} /> Reconnect
+              </button>
             )}
           </div>
         </div>
@@ -235,9 +319,15 @@ export default function BandwidthMonitor() {
       {/* Live Traffic Chart */}
       <div className="bg-card border border-border rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-medium">Live Traffic (Kbps) — Real-time</h2>
+          <h2 className="text-sm font-medium">
+            {isLive ? "Live Traffic (Kbps)" : hasCachedData ? "Traffic History (DB)" : "Traffic (Kbps)"}
+          </h2>
           {chartReady && (
-            <span className="text-xs text-muted-foreground">{points.length} samples</span>
+            <div className="flex items-center gap-2">
+              {isLive && <span className="flex items-center gap-1 text-xs text-emerald-400"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live</span>}
+              {!isLive && hasCachedData && <span className="text-xs text-muted-foreground">Last hour from DB</span>}
+              <span className="text-xs text-muted-foreground">{points.length} pts</span>
+            </div>
           )}
         </div>
         {chartReady ? (

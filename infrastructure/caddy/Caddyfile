@@ -6,15 +6,26 @@ admin.skynity.org {
     handle /api/* {
         reverse_proxy api:3001
     }
-    
+
+    # Socket.IO — explicit WebSocket upgrade matcher
+    @socketio_ws {
+        path /socket.io/*
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @socketio_ws {
+        reverse_proxy api:3001
+    }
+
+    # Socket.IO HTTP polling fallback
     handle /socket.io/* {
         reverse_proxy api:3001
     }
-    
+
     handle {
         reverse_proxy web:3000
     }
-    
+
     encode gzip
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
