@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { trpc } from "../../lib/trpc";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -7,8 +7,8 @@ import {
 import { NavLink } from "react-router";
 import { ArrowDown, ArrowUp, Wifi, Network } from "lucide-react";
 import { joinRouter, onEvent } from "../../lib/socket";
+import { liveCache, type BwState } from "../../lib/cache";
 
-interface BwPoint { time: string; rx: number; tx: number }
 interface IfaceStats { name: string; rxBps: number; txBps: number }
 
 function formatBps(bps: number): string {
@@ -24,71 +24,107 @@ const NAV_TABS = [
   { to: "/monitoring/sfp", label: "SFP" },
 ];
 
+function fromCache(routerId: string): BwState {
+  return liveCache.getBandwidth(routerId) ?? {
+    points: [],
+    live: null,
+    ifaceStats: [],
+    peakRx: 0,
+    peakTx: 0,
+  };
+}
+
 export default function BandwidthMonitor() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
   const [routerId, setRouterId] = useState("");
-  const [points, setPoints] = useState<BwPoint[]>([]);
-  const [live, setLive] = useState<{ rx: number; tx: number } | null>(null);
-  const [ifaceStats, setIfaceStats] = useState<IfaceStats[]>([]);
-  const [peakRx, setPeakRx] = useState(0);
-  const [peakTx, setPeakTx] = useState(0);
-
   const selected = routerId || routers?.[0]?.id || "";
+
+  // Initialise from module-level cache so tab-switches are instant.
+  const [bwState, setBwState] = useState<BwState>(() => fromCache(selected));
+  const prevSelectedRef = useRef(selected);
+
+  // When the selected router changes, load cached data for that router.
+  useEffect(() => {
+    if (selected && selected !== prevSelectedRef.current) {
+      setBwState(fromCache(selected));
+      prevSelectedRef.current = selected;
+    }
+  }, [selected]);
+
+  // On first mount restore for the initial router.
+  useEffect(() => {
+    if (selected) {
+      const cached = liveCache.getBandwidth(selected);
+      if (cached) setBwState(cached);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
-    setPoints([]);
-    setLive(null);
-    setIfaceStats([]);
-    setPeakRx(0);
-    setPeakTx(0);
     joinRouter(selected);
 
     const off = onEvent("bandwidth:update", (data) => {
       if (data.routerId !== selected) return;
+
       const total = data.interfaces.reduce(
-        (a: { rx: number; tx: number }, b: { rxBps: number; txBps: number }) => ({
-          rx: a.rx + b.rxBps,
-          tx: a.tx + b.txBps,
+        (acc: { rx: number; tx: number }, iface: { rxBps: number; txBps: number }) => ({
+          rx: acc.rx + iface.rxBps,
+          tx: acc.tx + iface.txBps,
         }),
         { rx: 0, tx: 0 },
       );
-      setLive(total);
-      setPeakRx((p) => Math.max(p, total.rx));
-      setPeakTx((p) => Math.max(p, total.tx));
-      setIfaceStats(
-        data.interfaces
-          .filter((i: { rxBps: number; txBps: number }) => i.rxBps > 0 || i.txBps > 0)
-          .sort((a: { rxBps: number }, b: { rxBps: number }) => b.rxBps - a.rxBps)
-          .slice(0, 12),
-      );
-      setPoints((prev) => [
-        ...prev.slice(-119),
-        {
-          time: new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-          rx: Math.round(total.rx / 1000),
-          tx: Math.round(total.tx / 1000),
-        },
-      ]);
+
+      const newPoint = {
+        time: new Date().toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        rx: Math.round(total.rx / 1000),
+        tx: Math.round(total.tx / 1000),
+      };
+
+      setBwState((prev) => {
+        const next: BwState = {
+          live: total,
+          peakRx: Math.max(prev.peakRx, total.rx),
+          peakTx: Math.max(prev.peakTx, total.tx),
+          ifaceStats: data.interfaces
+            .filter((i: { rxBps: number; txBps: number }) => i.rxBps > 0 || i.txBps > 0)
+            .sort((a: { rxBps: number }, b: { rxBps: number }) => b.rxBps - a.rxBps)
+            .slice(0, 12),
+          points: [...prev.points.slice(-119), newPoint],
+        };
+        // Persist to module cache so the next mount is instant.
+        liveCache.setBandwidth(selected, next);
+        return next;
+      });
     });
+
     return () => { off(); };
   }, [selected]);
 
-  const barData = ifaceStats.map((i) => ({
+  const { points, live, ifaceStats, peakRx } = bwState;
+
+  const barData = ifaceStats.map((i: IfaceStats) => ({
     name: i.name,
     rx: Math.round(i.rxBps / 1000),
     tx: Math.round(i.txBps / 1000),
   }));
 
+  const hasCachedData = points.length > 0;
+
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Bandwidth Monitor</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Bandwidth Monitor</h1>
+          {hasCachedData && !live && (
+            <p className="text-xs text-muted-foreground mt-0.5">Showing cached data · waiting for live update…</p>
+          )}
+        </div>
         <select
           title="Select router"
           value={selected}
-          onChange={(e) => setRouterId(e.target.value)}
+          onChange={(e) => { setRouterId(e.target.value); }}
           className="bg-secondary border border-border rounded px-3 py-1.5 text-sm outline-none"
         >
           {routers?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -176,11 +212,17 @@ export default function BandwidthMonitor() {
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <p className="text-muted-foreground text-sm py-10 text-center">
-            Waiting for live data via Socket.IO…
-            <br />
-            <span className="text-xs opacity-60">Monitoring worker must be running (production mode)</span>
-          </p>
+          <div className="py-10 text-center">
+            {/* Skeleton bars shown while waiting */}
+            <div className="flex items-end justify-center gap-1 h-16 mb-3 opacity-20">
+              {Array.from({ length: 20 }).map((_, i) => (
+                <div key={i} className="w-3 bg-emerald-400 rounded-sm animate-pulse"
+                  style={{ height: `${20 + Math.random() * 60}%`, animationDelay: `${i * 50}ms` }} />
+              ))}
+            </div>
+            <p className="text-muted-foreground text-sm">Waiting for live data via Socket.IO…</p>
+            <span className="text-xs text-muted-foreground opacity-60">Monitoring worker must be running (production mode)</span>
+          </div>
         )}
       </div>
 
@@ -222,7 +264,7 @@ export default function BandwidthMonitor() {
                 </tr>
               </thead>
               <tbody>
-                {ifaceStats.map((iface) => (
+                {ifaceStats.map((iface: IfaceStats) => (
                   <tr key={iface.name} className="border-b border-border last:border-0 hover:bg-secondary/30">
                     <td className="px-4 py-2.5 font-mono text-xs">{iface.name}</td>
                     <td className="px-4 py-2.5 text-right text-emerald-400 font-medium">{formatBps(iface.rxBps)}</td>

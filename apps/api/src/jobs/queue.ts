@@ -12,6 +12,7 @@ import {
   routers,
   telegramConfigs,
   alertLogs,
+  organizations,
 } from "@isp-nexus/db";
 import { and, eq } from "drizzle-orm";
 import { decryptText } from "../lib/crypto.js";
@@ -223,15 +224,58 @@ export function startAlertsWorker(): Worker {
   }, getQueueConnection());
 }
 
+export function startExpiryWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("expiry", async (job) => {
+    logger.info({ jobId: job.id }, "Expiry job started");
+    const { disableExpiredSubscriptions } = await import("../services/subscriptions/expiry.js");
+    const result = await disableExpiredSubscriptions();
+    logger.info({ result }, "Expiry job completed");
+  }, getQueueConnection());
+}
+
+export function startSyncWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("sync", async (job) => {
+    logger.info({ jobId: job.id }, "Sync job started");
+    const { syncHotspotUsersFromMikroTik, syncPppoeUsersFromMikroTik } = await import("../services/mikrotik/sync.js");
+    await syncHotspotUsersFromMikroTik();
+    await syncPppoeUsersFromMikroTik();
+    logger.info({ jobId: job.id }, "Sync job completed");
+  }, getQueueConnection());
+}
+
+export function startSecurityWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("security", async (job) => {
+    logger.info({ jobId: job.id }, "Security job started");
+    const { checkSuspiciousActivity } = await import("../services/security/monitor.js");
+    const orgs = await db.select().from(organizations);
+    for (const org of orgs) {
+      await checkSuspiciousActivity(org.id);
+    }
+    logger.info({ jobId: job.id }, "Security job completed");
+  }, getQueueConnection());
+}
+
 export async function scheduleJobs(): Promise<void> {
   const monitoringQueue = getMonitoringQueue();
   const alertsQueue = getAlertsQueue();
+  const expiryQueue = new Queue("expiry", getQueueConnection());
+  const syncQueue = new Queue("sync", getQueueConnection());
+  const securityQueue = new Queue("security", getQueueConnection());
   try {
     await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
     await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
+    await expiryQueue.add("expire", {}, { repeat: { every: 15 * 60 * 1000 } }); // 15 min
+    await syncQueue.add("sync", {}, { repeat: { every: 5 * 60 * 1000 } }); // 5 min
+    await securityQueue.add("check", {}, { repeat: { every: 10 * 60 * 1000 } }); // 10 min
   } finally {
     await monitoringQueue.close();
     await alertsQueue.close();
+    await expiryQueue.close();
+    await syncQueue.close();
+    await securityQueue.close();
   }
   logger.info("BullMQ jobs scheduled");
 }

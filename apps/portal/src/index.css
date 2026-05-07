@@ -15,14 +15,173 @@ body {
   min-height: 100vh;
 }
 
-::selection { background: rgba(14, 165, 233, 0.3); color: #fff; }
-
-::-webkit-scrollbar { width: 5px; }
+::selection { background: rgba(6,182,212,0.35); color: #fff; }
+::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(14, 165, 233, 0.2); border-radius: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(6,182,212,0.25); border-radius: 10px; }
 
+/* ── Glassmorphism ─────────────────────────────────────────────────── */
 .glass {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255,255,255,0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.07);
 }
+.glass-strong {
+  background: rgba(255,255,255,0.07);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.glass-card {
+  background: linear-gradient(135deg, rgba(6,182,212,0.06), rgba(59,130,246,0.04));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(6,182,212,0.18);
+}
+
+/* ── Gradient text ─────────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.gradient-text-cyan {
+  background: linear-gradient(135deg, #06b6d4, #22d3ee);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────────── */
+.btn-primary {
+  background: linear-gradient(135deg, #06b6d4, #3b82f6);
+  color: white;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:active:not(:disabled) { transform: translateY(0); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-outline-cyan {
+  background: transparent;
+  color: #06b6d4;
+  border: 1.5px solid rgba(6,182,212,0.5);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-outline-cyan:hover { background: rgba(6,182,212,0.08); border-color: #06b6d4; }
+
+/* ── Animations ────────────────────────────────────────────────────── */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(6,182,212,0.45); }
+  50%       { box-shadow: 0 0 0 14px rgba(6,182,212,0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes border-glow {
+  0%, 100% { border-color: rgba(6,182,212,0.3); }
+  50%       { border-color: rgba(6,182,212,0.65); }
+}
+@keyframes count-in {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.animate-float        { animation: float 3.5s ease-in-out infinite; }
+.animate-pulse-glow   { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-slide-up     { animation: slide-up 0.5s ease-out both; }
+.animate-slide-down   { animation: slide-down 0.4s ease-out both; }
+.animate-fade-in      { animation: fade-in 0.6s ease-out both; }
+.animate-spin-slow    { animation: spin-slow 6s linear infinite; }
+.animate-border-glow  { animation: border-glow 2.5s ease-in-out infinite; }
+.animate-count-in     { animation: count-in 0.4s ease-out both; }
+
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+.delay-400 { animation-delay: 0.4s; }
+.delay-500 { animation-delay: 0.5s; }
+.delay-600 { animation-delay: 0.6s; }
+
+/* ── Skeleton ──────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ── Background mesh ───────────────────────────────────────────────── */
+.bg-mesh {
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 5%,  rgba(6,182,212,0.09) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 90%, rgba(59,130,246,0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 50% 50%, rgba(139,92,246,0.04) 0%, transparent 70%),
+    #060a14;
+}
+
+/* ── Package cards ─────────────────────────────────────────────────── */
+.pkg-trial {
+  background: linear-gradient(135deg, rgba(6,182,212,0.14), rgba(34,211,238,0.06));
+  border: 1.5px solid rgba(6,182,212,0.38);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.pkg-trial:hover { border-color: rgba(6,182,212,0.65); box-shadow: 0 0 28px rgba(6,182,212,0.16); }
+.pkg-paid {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  transition: border-color 0.2s, background 0.2s;
+}
+.pkg-paid:hover { border-color: rgba(6,182,212,0.35); background: rgba(255,255,255,0.06); }
+
+/* ── Status rings ──────────────────────────────────────────────────── */
+.ring-active  { box-shadow: 0 0 0 3px rgba(16,185,129,0.25), 0 0 20px rgba(16,185,129,0.1); }
+.ring-expired { box-shadow: 0 0 0 3px rgba(239,68,68,0.25),  0 0 20px rgba(239,68,68,0.1); }
+.ring-trial   { box-shadow: 0 0 0 3px rgba(6,182,212,0.25),  0 0 20px rgba(6,182,212,0.1); }
+
+/* ── Input ─────────────────────────────────────────────────────────── */
+.portal-input {
+  width: 100%;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #e2e8f0;
+  outline: none;
+  transition: border-color 0.2s, background 0.2s;
+  -webkit-appearance: none;
+}
+.portal-input:focus {
+  border-color: rgba(6,182,212,0.6);
+  background: rgba(255,255,255,0.07);
+  box-shadow: 0 0 0 3px rgba(6,182,212,0.1);
+}
+.portal-input::placeholder { color: #475569; }

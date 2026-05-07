@@ -17,6 +17,7 @@ import { hotspotRouter } from "./routers/hotspot.js";
 import { backupRouter } from "./routers/backup.js";
 import { settingsRouter } from "./routers/settings.js";
 import { activityRouter } from "./routers/activity.js";
+import { wirelessRouter } from "./routers/wireless.js";
 
 export const appRouter = router({
   ping: publicProcedure.query(() => ({ ok: true, ts: new Date().toISOString() })),
@@ -38,6 +39,7 @@ export const appRouter = router({
   backup: backupRouter,
   settings: settingsRouter,
   activity: activityRouter,
+  wireless: wirelessRouter,
 });
 
 export type AppRouter = typeof appRouter;

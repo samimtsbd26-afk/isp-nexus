@@ -2,14 +2,16 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and, desc, asc } from "drizzle-orm";
 import { router, publicProcedure } from "../middleware.js";
-import { customers, packages, orders, subscriptions, invoices, supportTickets, routers, telegramConfigs } from "@isp-nexus/db";
+import { customers, packages, orders, subscriptions, invoices, supportTickets, routers, telegramConfigs, hotspotUsers, pppoeUsers } from "@isp-nexus/db";
 import { hashPassword, verifyPassword, encryptText, decryptText } from "../lib/crypto.js";
 import { signPortalToken, verifyPortalToken } from "../auth/session.js";
 import { portalRegisterSchema, submitOrderSchema, guestOrderSchema, checkOrderSchema, trialRegisterSchema } from "@isp-nexus/shared";
 import { getMikroTikClient } from "../services/mikrotik/client.js";
 import { logger } from "../lib/logger.js";
-import { sendOrderNotification } from "../services/telegram/bot.js";
+import { sendOrderNotification, sendLoginAlert } from "../services/telegram/bot.js";
+import { emitOrgEvent } from "../boot.js";
 import { ensureHotspotProfile, syncHotspotRadiusUser } from "../services/hotspot/provisioning.js";
+import { nextCustomerCode } from "./customer.js";
 
 const portalAuthed = publicProcedure.use(async ({ ctx, next, input }: any) => {
   const token: string = input?.token;
@@ -55,7 +57,7 @@ export const portalRouter = router({
         .where(and(eq(customers.phone, input.phone), eq(customers.orgId, input.orgId))).limit(1);
       if (existing.length > 0) throw new TRPCError({ code: "CONFLICT", message: "Phone already registered" });
       const passwordHash = await hashPassword(input.password);
-      const code = `C${Date.now().toString().slice(-6)}`;
+      const code = await nextCustomerCode(ctx.db, input.orgId);
       const [customer] = await ctx.db.insert(customers).values({
         orgId: input.orgId, customerCode: code, fullName: input.fullName,
         phone: input.phone, email: input.email, passwordHash,
@@ -73,6 +75,11 @@ export const portalRouter = router({
       const valid = await verifyPassword(input.password, customer.passwordHash);
       if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid credentials" });
       const token = await signPortalToken({ customerId: customer.id, orgId: customer.orgId, type: "portal" });
+      // Non-blocking Telegram login alert to admin
+      ctx.db.select({ chatId: telegramConfigs.chatId }).from(telegramConfigs)
+        .where(and(eq(telegramConfigs.orgId, customer.orgId), eq(telegramConfigs.alertsEnabled, true))).limit(1)
+        .then(([cfg]) => { if (cfg) sendLoginAlert(cfg.chatId, customer.fullName, customer.phone).catch(() => {}); })
+        .catch(() => {});
       const { passwordHash: _, ...safe } = customer;
       return { token, customer: safe };
     }),
@@ -178,7 +185,7 @@ export const portalRouter = router({
           throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid credentials" });
         }
       } else {
-        const code = `C${Date.now().toString().slice(-6)}`;
+        const code = await nextCustomerCode(ctx.db, input.orgId);
         const passwordHash = await hashPassword(input.password);
         [customer] = await ctx.db.insert(customers).values({
           orgId: input.orgId, customerCode: code, fullName: input.fullName,
@@ -247,6 +254,17 @@ export const portalRouter = router({
         await sendOrderNotification(tgConfig.chatId, { ...order, amountBdt: pkg.priceBdt, paymentMethod: input.paymentMethod }, customer, pkg);
       }
 
+      // Real-time notification to admin panel
+      emitOrgEvent(input.orgId, "order:new", {
+        orgId: input.orgId,
+        orderId: order.id,
+        customerName: customer.fullName,
+        customerPhone: customer.phone ?? "",
+        amountBdt: pkg.priceBdt,
+        paymentMethod: input.paymentMethod,
+        trxId: input.trxId,
+      });
+
       return { orderId: order.id, customerId: customer.id, isTrial: false };
     }),
 
@@ -297,7 +315,7 @@ export const portalRouter = router({
           throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid credentials" });
         }
       } else {
-        const code = `C${Date.now().toString().slice(-6)}`;
+        const code = await nextCustomerCode(ctx.db, input.orgId);
         const passwordHash = await hashPassword(input.password);
         [customer] = await ctx.db.insert(customers).values({
           orgId: input.orgId, customerCode: code, fullName: input.fullName,
@@ -348,5 +366,64 @@ export const portalRouter = router({
       const token = await signPortalToken({ customerId: customer.id, orgId: input.orgId, type: "portal" });
       const { passwordHash: _, ...safe } = customer;
       return { token, customer: safe };
+    }),
+
+  macCheck: publicProcedure
+    .input(z.object({ orgId: z.string().uuid(), mac: z.string().min(1).max(30) }))
+    .query(async ({ ctx, input }) => {
+      const cleanMac = input.mac.toLowerCase().replace(/[^0-9a-f:.-]/g, "");
+
+      // Check hotspot users by MAC
+      const [hotspot] = await ctx.db.select({ id: hotspotUsers.id, isActive: hotspotUsers.isActive, name: hotspotUsers.name })
+        .from(hotspotUsers)
+        .where(and(eq(hotspotUsers.orgId, input.orgId), eq(hotspotUsers.macAddress, cleanMac)))
+        .limit(1);
+
+      // Check PPPoE users by MAC (caller-id)
+      const [pppoe] = await ctx.db.select({ id: pppoeUsers.id, isActive: pppoeUsers.isActive, name: pppoeUsers.name })
+        .from(pppoeUsers)
+        .where(and(eq(pppoeUsers.orgId, input.orgId), eq(pppoeUsers.callerId, cleanMac)))
+        .limit(1);
+
+      const knownUser = hotspot ?? pppoe;
+      const hasActiveSession = !!(knownUser?.isActive);
+
+      // Check subscription status via username
+      let hasActiveSubscription = false;
+      let hasExpiredSubscription = false;
+      let hasTrial = false;
+
+      if (knownUser?.name) {
+        const [sub] = await ctx.db.select({ status: subscriptions.status, packageId: subscriptions.packageId })
+          .from(subscriptions)
+          .where(and(eq(subscriptions.orgId, input.orgId), eq(subscriptions.username, knownUser.name)))
+          .orderBy(desc(subscriptions.createdAt))
+          .limit(1);
+
+        if (sub) {
+          hasActiveSubscription = sub.status === "active";
+          hasExpiredSubscription = sub.status === "expired" || sub.status === "suspended";
+
+          // Check if this was a trial package
+          if (sub.packageId) {
+            const [pkg] = await ctx.db.select({ isTrial: packages.isTrial })
+              .from(packages).where(eq(packages.id, sub.packageId)).limit(1);
+            hasTrial = pkg?.isTrial ?? false;
+          }
+        }
+      }
+
+      const hasSubscription = !!(knownUser);
+      const isNewDevice = !hasSubscription;
+
+      return {
+        hasSubscription,
+        isNewDevice,
+        hasTrial,
+        hasActiveSubscription,
+        hasExpiredSubscription,
+        hasActiveSession,
+        username: knownUser?.name ?? null,
+      };
     }),
 });

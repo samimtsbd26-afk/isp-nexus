@@ -1,4 +1,4 @@
-import { sql, eq, gte, and, lt } from "drizzle-orm";
+import { sql, eq, gte, and, isNull } from "drizzle-orm";
 import { router, authedProcedure } from "../middleware.js";
 import { orders, customers, subscriptions, packages, routers } from "@isp-nexus/db";
 
@@ -10,7 +10,7 @@ export const analyticsRouter = router({
     const [totalCustomers] = await ctx.db
       .select({ count: sql<number>`count(*)` })
       .from(customers)
-      .where(eq(customers.orgId, ctx.orgId));
+      .where(and(eq(customers.orgId, ctx.orgId), isNull(customers.deletedAt)));
 
     const [activeSubscriptions] = await ctx.db
       .select({ count: sql<number>`count(*)` })
@@ -135,7 +135,7 @@ export const analyticsRouter = router({
         count: sql<number>`count(*)`,
       })
       .from(customers)
-      .where(and(eq(customers.orgId, ctx.orgId), gte(customers.createdAt, since)))
+      .where(and(eq(customers.orgId, ctx.orgId), gte(customers.createdAt, since), isNull(customers.deletedAt)))
       .groupBy(sql`date_trunc('day', created_at)`)
       .orderBy(sql`date_trunc('day', created_at)`);
   }),

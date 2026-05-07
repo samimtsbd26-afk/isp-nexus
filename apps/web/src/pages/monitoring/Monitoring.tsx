@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { joinRouter, onEvent, reconnectSocket } from "../../lib/socket";
+import { liveCache, type ResourceState } from "../../lib/cache";
 import {
   AlertTriangle,
   Bell,
@@ -319,6 +320,7 @@ export default function Monitoring() {
   const [draggedWidget, setDraggedWidget] = useState<WidgetId | null>(null);
   const [layout, setLayout] = useState<WidgetLayout[]>(() => loadLayout(undefined));
   const [liveResource, setLiveResource] = useState<LiveResource | null>(null);
+  const prevRouterRef = useRef("");
   const [liveInterfaces, setLiveInterfaces] = useState<LiveInterface[]>([]);
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
 
@@ -402,9 +404,17 @@ export default function Monitoring() {
     reconnectSocket();
     joinRouter(selected);
     const markLive = () => setLastLiveAt(new Date());
+    // Restore cached resource data for instant display on tab-return.
+    if (selected !== prevRouterRef.current) {
+      const cached = liveCache.getResource(selected);
+      if (cached) setLiveResource(cached as LiveResource);
+      prevRouterRef.current = selected;
+    }
+
     const offResource = onEvent("resource:update", (event) => {
       if (event.routerId !== selected) return;
       setLiveResource(event);
+      liveCache.setResource(selected, event as ResourceState);
       markLive();
     });
     const offBandwidth = onEvent("bandwidth:update", (event) => {

@@ -23,8 +23,11 @@ export interface SocketEvents {
   "bandwidth:update": { routerId: string; interfaces: Array<{ name: string; rxBps: number; txBps: number }> };
   "ping:update": { routerId: string; target: string; avgMs: number; packetLossPct: number };
   "alert:new": { routerId: string; routerName: string; alertType: string; message: string; severity: string };
-  "order:new": { orderId: string; customerName: string; amountBdt: number; paymentMethod: string };
+  "order:new": { orgId: string; orderId: string; customerName: string; customerPhone: string; amountBdt: number; paymentMethod: string; trxId?: string };
+  "order:approved": { orgId: string; orderId: string; customerName: string; amountBdt: number; packageName: string };
+  "order:stats": { orgId: string; pendingCount: number; todayRevenue: number; totalActiveSubscriptions: number };
   "subscription:status": { subscriptionId: string; status: SubscriptionStatus };
+  "sms:sent": { orgId: string; phone: string; status: "sent" | "failed" };
 }
 
 export interface MikroTikDevice {

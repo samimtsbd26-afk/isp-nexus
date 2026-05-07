@@ -1,8 +1,9 @@
 import { Bot } from "grammy";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, sql, gte, lte } from "drizzle-orm";
 import {
   createDb,
   customers,
+  orders,
   packages,
   radcheck,
   radreply,
@@ -29,19 +30,154 @@ export async function initBot(): Promise<void> {
   botInstance = new Bot(env.TELEGRAM_BOT_TOKEN);
 
   botInstance.command("start", (ctx) => ctx.reply(
-    "👋 Welcome to ISP Nexus!\n\n/status — Router status\n/customers — Customer stats\n/pending — Pending orders\n/help — All commands"
+    "👋 *Welcome to SKYNITY ISP Nexus!*\n\n" +
+    "📊 Stats Commands:\n" +
+    "/stats — Overall ISP stats\n/revenue — Revenue summary\n/new_users — New user counts\n/trials — Trial users\n/payments — Recent payments\n/router_status — Router health\n\n" +
+    "👤 User Commands:\n" +
+    "/user <name> <speed> <days> <devices>\n/disable <user>\n/enable <user>\n/delete <user>\n/extend <user> <days>\n\n" +
+    "/help — Full command list", { parse_mode: "Markdown" }
   ));
 
   botInstance.command("help", (ctx) => ctx.reply(
-    "📋 ISP Nexus Commands:\n/status — Router status\n/customers — Total customers\n/pending — Pending orders\n/user <name> <speed> <days> <devices>\n/disable <user>\n/enable <user>\n/delete <user>\n/extend <user> <days>"
+    "📋 *SKYNITY ISP Commands*\n\n" +
+    "📊 *Admin Stats:*\n/stats — ISP overview\n/revenue — Revenue\n/new\\_users — New customers\n/trials — Trial users\n/payments — Recent payments\n/router\\_status — Router health\n\n" +
+    "👤 *User Management:*\n/user \\<name\\> \\<speed\\> \\<days\\> \\<devices\\>\n/disable \\<user\\>\n/enable \\<user\\>\n/delete \\<user\\>\n/extend \\<user\\> \\<days\\>",
+    { parse_mode: "MarkdownV2" }
   ));
 
+  botInstance.command("stats", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const { orgId } = admin;
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const [totalCust] = await db.select({ n: sql<number>`count(*)` }).from(customers).where(eq(customers.orgId, orgId));
+      const [activeSubs] = await db.select({ n: sql<number>`count(*)` }).from(subscriptions).where(and(eq(subscriptions.orgId, orgId), eq(subscriptions.status, "active")));
+      const [trialSubs] = await db.select({ n: sql<number>`count(*)` }).from(subscriptions).innerJoin(packages, eq(subscriptions.packageId, packages.id)).where(and(eq(subscriptions.orgId, orgId), eq(subscriptions.status, "active"), eq(packages.isTrial, true)));
+      const [pendingOrds] = await db.select({ n: sql<number>`count(*)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "pending")));
+      const [monthRev] = await db.select({ total: sql<number>`coalesce(sum(amount_bdt),0)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "approved"), gte(orders.createdAt, monthStart)));
+      const routerList = await db.select({ name: routers.name, isActive: routers.isActive, cpuLoad: routers.cpuLoad }).from(routers).where(eq(routers.orgId, orgId));
+      const onlineRouters = routerList.filter((r) => r.isActive).length;
+      await ctx.reply(
+        `📊 *ISP Stats — ${now.toLocaleDateString("en-BD")}*\n\n` +
+        `👥 Customers: *${Number(totalCust?.n ?? 0).toLocaleString()}*\n` +
+        `✅ Active Subs: *${Number(activeSubs?.n ?? 0).toLocaleString()}*\n` +
+        `🎁 Trials Active: *${Number(trialSubs?.n ?? 0).toLocaleString()}*\n` +
+        `📦 Pending Orders: *${Number(pendingOrds?.n ?? 0).toLocaleString()}*\n` +
+        `💰 Month Revenue: *৳${Number(monthRev?.total ?? 0).toLocaleString()}*\n` +
+        `📡 Routers Online: *${onlineRouters}/${routerList.length}*`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
+  botInstance.command("revenue", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const { orgId } = admin;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const weekStart = new Date(now.getTime() - 7 * 86400000);
+      const [todayRev] = await db.select({ total: sql<number>`coalesce(sum(amount_bdt),0)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "approved"), gte(orders.createdAt, todayStart)));
+      const [weekRev] = await db.select({ total: sql<number>`coalesce(sum(amount_bdt),0)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "approved"), gte(orders.createdAt, weekStart)));
+      const [monthRev] = await db.select({ total: sql<number>`coalesce(sum(amount_bdt),0)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "approved"), gte(orders.createdAt, monthStart)));
+      const [totalRev] = await db.select({ total: sql<number>`coalesce(sum(amount_bdt),0)` }).from(orders).where(and(eq(orders.orgId, orgId), eq(orders.status, "approved")));
+      await ctx.reply(
+        `💰 *Revenue Summary*\n\n` +
+        `Today: *৳${Number(todayRev?.total ?? 0).toLocaleString()}*\n` +
+        `This Week: *৳${Number(weekRev?.total ?? 0).toLocaleString()}*\n` +
+        `This Month: *৳${Number(monthRev?.total ?? 0).toLocaleString()}*\n` +
+        `All Time: *৳${Number(totalRev?.total ?? 0).toLocaleString()}*`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
+  botInstance.command("new_users", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const { orgId } = admin;
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const weekStart = new Date(now.getTime() - 7 * 86400000);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const [todayN] = await db.select({ n: sql<number>`count(*)` }).from(customers).where(and(eq(customers.orgId, orgId), gte(customers.createdAt, todayStart)));
+      const [weekN] = await db.select({ n: sql<number>`count(*)` }).from(customers).where(and(eq(customers.orgId, orgId), gte(customers.createdAt, weekStart)));
+      const [monthN] = await db.select({ n: sql<number>`count(*)` }).from(customers).where(and(eq(customers.orgId, orgId), gte(customers.createdAt, monthStart)));
+      const [totalN] = await db.select({ n: sql<number>`count(*)` }).from(customers).where(eq(customers.orgId, orgId));
+      await ctx.reply(
+        `👥 *New Customers*\n\nToday: *${Number(todayN?.n ?? 0)}*\nThis Week: *${Number(weekN?.n ?? 0)}*\nThis Month: *${Number(monthN?.n ?? 0)}*\nTotal: *${Number(totalN?.n ?? 0)}*`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
+  botInstance.command("trials", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const { orgId } = admin;
+      const now = new Date();
+      const tomorrow = new Date(now.getTime() + 86400000);
+      const [activeTrials] = await db.select({ n: sql<number>`count(*)` }).from(subscriptions).innerJoin(packages, eq(subscriptions.packageId, packages.id)).where(and(eq(subscriptions.orgId, orgId), eq(subscriptions.status, "active"), eq(packages.isTrial, true)));
+      const [expiringToday] = await db.select({ n: sql<number>`count(*)` }).from(subscriptions).innerJoin(packages, eq(subscriptions.packageId, packages.id)).where(and(eq(subscriptions.orgId, orgId), eq(subscriptions.status, "active"), eq(packages.isTrial, true), lte(subscriptions.expiresAt, tomorrow)));
+      const [expired] = await db.select({ n: sql<number>`count(*)` }).from(subscriptions).innerJoin(packages, eq(subscriptions.packageId, packages.id)).where(and(eq(subscriptions.orgId, orgId), eq(subscriptions.status, "expired"), eq(packages.isTrial, true)));
+      await ctx.reply(
+        `🎁 *Trial Users*\n\nActive: *${Number(activeTrials?.n ?? 0)}*\nExpiring Today: *${Number(expiringToday?.n ?? 0)}*\nExpired (not renewed): *${Number(expired?.n ?? 0)}*`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
+  botInstance.command("payments", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const { orgId } = admin;
+      const recent = await db.select({
+        id: orders.id, amountBdt: orders.amountBdt, status: orders.status,
+        paymentMethod: orders.paymentMethod, trxId: orders.trxId, createdAt: orders.createdAt,
+        customerPhone: customers.phone,
+      }).from(orders).innerJoin(customers, eq(orders.customerId, customers.id))
+        .where(and(eq(orders.orgId, orgId), eq(orders.status, "approved")))
+        .orderBy(sql`orders.created_at desc`).limit(8);
+      if (!recent.length) { await ctx.reply("No approved payments yet."); return; }
+      const lines = recent.map((o) =>
+        `• ৳${o.amountBdt} · ${o.paymentMethod ?? "—"} · ${o.customerPhone ?? "?"}`
+      ).join("\n");
+      await ctx.reply(`💳 *Recent Payments*\n\n${lines}`, { parse_mode: "Markdown" });
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
+  botInstance.command("router_status", async (ctx) => {
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const routerList = await db.select({ name: routers.name, host: routers.host, isActive: routers.isActive, cpuLoad: routers.cpuLoad, freeMemoryMb: routers.freeMemoryMb, temperatureCelsius: routers.temperatureCelsius, lastSeenAt: routers.lastSeenAt }).from(routers).where(eq(routers.orgId, admin.orgId));
+      if (!routerList.length) { await ctx.reply("No routers configured."); return; }
+      const lines = routerList.map((r) => {
+        const status = r.isActive ? "✅ Online" : "❌ Offline";
+        const cpu = r.cpuLoad != null ? ` CPU: ${r.cpuLoad}%` : "";
+        const temp = r.temperatureCelsius != null ? ` Temp: ${Math.round(r.temperatureCelsius)}°C` : "";
+        return `${status} *${r.name}* (${r.host})${cpu}${temp}`;
+      }).join("\n");
+      await ctx.reply(`📡 *Router Status*\n\n${lines}`, { parse_mode: "Markdown" });
+    } catch (err) { await ctx.reply(errorMessage(err)); }
+  });
+
   botInstance.command("status", async (ctx) => {
-    ctx.reply("📡 Fetching router status... (connect via admin panel to configure)");
+    await ctx.reply("Use /router\\_status for router health, or /stats for ISP overview.", { parse_mode: "MarkdownV2" });
   });
 
   botInstance.command("pending", async (ctx) => {
-    ctx.reply("📋 Check pending orders at your admin dashboard.");
+    try {
+      const admin = await requireTelegramAdmin(String(ctx.from?.id ?? ""));
+      const pending = await db.select({ id: orders.id, amountBdt: orders.amountBdt, paymentMethod: orders.paymentMethod, trxId: orders.trxId, customerPhone: customers.phone, createdAt: orders.createdAt })
+        .from(orders).innerJoin(customers, eq(orders.customerId, customers.id))
+        .where(and(eq(orders.orgId, admin.orgId), eq(orders.status, "pending")))
+        .orderBy(sql`orders.created_at desc`).limit(10);
+      if (!pending.length) { await ctx.reply("No pending orders! ✅"); return; }
+      const lines = pending.map((o, i) => `${i + 1}. ৳${o.amountBdt} · ${o.paymentMethod ?? "?"} · ${o.customerPhone} · TRX: ${o.trxId ?? "—"}`).join("\n");
+      await ctx.reply(`📦 *${pending.length} Pending Orders*\n\n${lines}\n\nGo to admin panel to approve.`, { parse_mode: "Markdown" });
+    } catch (err) { await ctx.reply(errorMessage(err)); }
   });
 
   botInstance.command("user", async (ctx) => {
@@ -126,9 +262,33 @@ export async function sendApprovalNotification(chatId: string, customer: any, pk
     `Customer: ${customer?.fullName ?? "N/A"}`,
     `Phone: ${customer?.phone ?? "N/A"}`,
     `Package: ${pkg?.name ?? "N/A"}`,
+    `Amount: ৳${pkg?.priceBdt ?? 0}`,
   ].join("\n");
   try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.error({ err, chatId }, "Failed to send approval notification"); }
+}
+
+export async function sendExpiryAlert(chatId: string, customerName: string, packageName: string, daysLeft: number, portalUrl?: string): Promise<void> {
+  if (!botInstance) return;
+  const urgency = daysLeft === 0 ? "🚨" : daysLeft === 1 ? "⚠️" : "⏰";
+  const timeLabel = daysLeft === 0 ? "expired today" : daysLeft === 1 ? "expires tomorrow" : `expires in ${daysLeft} days`;
+  const lines = [
+    `${urgency} *Package Expiry Alert*`,
+    ``,
+    `Customer: ${customerName}`,
+    `Package: ${packageName}`,
+    `Status: ${timeLabel}`,
+  ];
+  if (portalUrl) lines.push(`\nRenew: ${portalUrl}`);
+  try { await botInstance.api.sendMessage(chatId, lines.join("\n"), { parse_mode: "Markdown" }); }
+  catch (err) { logger.warn({ err, chatId }, "Failed to send expiry alert"); }
+}
+
+export async function sendLoginAlert(orgChatId: string, customerName: string, phone: string): Promise<void> {
+  if (!botInstance) return;
+  const message = `🔑 *Portal Login*\n\nCustomer: ${customerName}\nPhone: ${phone}\nTime: ${new Date().toLocaleString("en-BD")}`;
+  try { await botInstance.api.sendMessage(orgChatId, message, { parse_mode: "Markdown" }); }
+  catch (err) { logger.warn({ err }, "Failed to send login alert"); }
 }
 
 type TelegramAdmin = { id: string; orgId: string };

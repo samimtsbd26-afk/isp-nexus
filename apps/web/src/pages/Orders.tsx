@@ -1,8 +1,9 @@
-﻿import { useState } from "react";
+﻿import { useState, useEffect } from "react";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
-import { CheckCircle, XCircle, RefreshCw, AlertTriangle } from "lucide-react";
+import { CheckCircle, XCircle, RefreshCw, AlertTriangle, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Empty, Modal, Input } from "../components/ui/index";
+import { onEvent } from "../lib/socket";
 
 function StatusBadge({ status }: Readonly<{ status: string }>) {
   const map: Record<string, "warning" | "success" | "destructive" | "default"> = {
@@ -17,6 +18,23 @@ export default function Orders() {
   const [tab, setTab] = useState<"pending" | "all">("pending");
   const [noteId, setNoteId] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [liveAlert, setLiveAlert] = useState<{ customerName: string; amountBdt: number; paymentMethod: string } | null>(null);
+
+  // Real-time order notifications via WebSocket
+  useEffect(() => {
+    const offNew = onEvent("order:new", (data) => {
+      setLiveAlert({ customerName: data.customerName, amountBdt: data.amountBdt, paymentMethod: data.paymentMethod });
+      toast.info(`💳 New order: ${data.customerName} · ৳${data.amountBdt} via ${data.paymentMethod}`);
+      void refetchPending();
+      void refetchAll();
+    });
+    const offApproved = onEvent("order:approved", (data) => {
+      toast.success(`✅ Order approved: ${data.customerName} · ৳${data.amountBdt}`);
+      void refetchPending();
+      void refetchAll();
+    });
+    return () => { offNew(); offApproved(); };
+  }, [refetchPending, refetchAll]);
 
   const approve = trpc.order.approve.useMutation({
     onSuccess: () => { refetchPending(); refetchAll(); toast.success("Order approved — subscription activated"); },
@@ -47,6 +65,19 @@ export default function Orders() {
           </Button>
         </div>
       </div>
+
+      {/* Real-time new order flash */}
+      {liveAlert && (
+        <div className="flex items-center justify-between p-3 rounded-xl border border-cyan-500/30 bg-cyan-500/5 animate-pulse">
+          <div className="flex items-center gap-2">
+            <Zap size={15} className="text-cyan-400" />
+            <span className="text-sm font-medium text-cyan-300">
+              New order live: <strong>{liveAlert.customerName}</strong> · ৳{liveAlert.amountBdt} via {liveAlert.paymentMethod}
+            </span>
+          </div>
+          <button type="button" onClick={() => setLiveAlert(null)} className="text-xs text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+      )}
 
       {pending && pending.length > 0 && tab === "pending" && (
         <Card className="border-amber-500/30 bg-amber-500/5">

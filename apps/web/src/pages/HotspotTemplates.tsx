@@ -1,44 +1,611 @@
-﻿import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
-import { Code2, Eye, MonitorSmartphone, Plus, RotateCcw, Save, Smartphone, SunMoon, Trash2, Upload } from "lucide-react";
-import { Card, CardContent, Button, Badge, Modal, Input, Empty, Select } from "../components/ui/index";
+import {
+  Code2, Eye, MonitorSmartphone, Plus, RotateCcw, Save, Smartphone, SunMoon,
+  Trash2, Upload, Palette, Layout, History, Maximize2, X, ChevronUp, ChevronDown,
+  Check, Layers, Globe, Image, Type, Sliders,
+} from "lucide-react";
+import {
+  Card, CardContent, Button, Badge, Modal, Input, Empty, Select,
+} from "../components/ui/index";
 
-const EMPTY = { name: "", title: "", companyName: "", logoUrl: "", primaryColor: "#3b82f6", backgroundColor: "#0f172a", htmlContent: "", cssContent: "", isDefault: false };
-const DEFAULT_PACKAGES = [
-  { name: "Mini 10", code: "mini10", price: "50", speed: "3M/3M", days: "10", devices: "1" },
-  { name: "Mini 15", code: "mini15", price: "70", speed: "3M/3M", days: "15", devices: "1" },
-  { name: "Mini 20", code: "mini20", price: "90", speed: "3M/3M", days: "20", devices: "1" },
-  { name: "Basic", code: "basic", price: "100", speed: "3M/3M", days: "30", devices: "1" },
-  { name: "Pro", code: "pro", price: "150", speed: "5M/5M", days: "30", devices: "1" },
-  { name: "Ultra", code: "ultra", price: "500", speed: "15M/15M", days: "30", devices: "4" },
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type ButtonStyle = "solid" | "gradient" | "outline";
+type ShadowStyle = "none" | "soft" | "glow";
+
+interface Package {
+  name: string;
+  code: string;
+  price: string;
+  speed: string;
+  days: string;
+  devices: string;
+}
+
+interface TemplateSections {
+  logo: boolean;
+  headline: boolean;
+  hero: boolean;
+  trialBanner: boolean;
+  loginForm: boolean;
+  packages: boolean;
+  socialLinks: boolean;
+  contactInfo: boolean;
+  termsBox: boolean;
+}
+
+interface TemplateForm {
+  name: string;
+  title: string;
+  companyName: string;
+  // Brand
+  logoUrl: string;
+  faviconUrl: string;
+  backgroundUrl: string;
+  heroUrl: string;
+  primaryColor: string;
+  backgroundColor: string;
+  accentColor: string;
+  // Typography
+  fontFamily: string;
+  headlineEn: string;
+  headlineBn: string;
+  subheadline: string;
+  // Style
+  borderRadius: number;
+  cardOpacity: number;
+  buttonStyle: ButtonStyle;
+  shadowStyle: ShadowStyle;
+  // Sections
+  sections: TemplateSections;
+  // Content
+  trialBanner: string;
+  whatsappLink: string;
+  telegramLink: string;
+  paymentNumber: string;
+  termsText: string;
+  // SEO
+  metaDescription: string;
+  // Packages
+  packages: Package[];
+  // Code (generated or custom)
+  htmlContent: string;
+  cssContent: string;
+  isDefault: boolean;
+}
+
+interface VersionEntry {
+  ts: number;
+  label: string;
+  form: TemplateForm;
+}
+
+type EditorTab = "visual" | "library" | "code" | "seo";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const FONT_OPTIONS = [
+  { label: "System UI", value: "system-ui,sans-serif" },
+  { label: "Inter", value: "'Inter',system-ui,sans-serif" },
+  { label: "Roboto", value: "'Roboto',system-ui,sans-serif" },
+  { label: "Poppins", value: "'Poppins',system-ui,sans-serif" },
+  { label: "Nunito", value: "'Nunito',system-ui,sans-serif" },
+  { label: "Rajdhani (Gaming)", value: "'Rajdhani',system-ui,sans-serif" },
 ];
-const EDITOR_EMPTY = {
-  ...EMPTY,
-  backgroundUrl: "",
-  heroUrl: "",
-  trialBanner: "7 Days Free Trial",
-  whatsappLink: "https://wa.me/8801811871332",
-  telegramLink: "https://t.me/shamimkhan313",
-  paymentNumber: "01811871332",
-  englishText: "NEXT GEN INTERNET",
-  banglaText: "নেক্সট জেন ইন্টারনেট",
-  packages: DEFAULT_PACKAGES,
+
+const SECTION_LABELS: Record<keyof TemplateSections, string> = {
+  logo: "Logo / Brand Mark",
+  headline: "Headline Text",
+  hero: "Hero Image",
+  trialBanner: "Trial Banner",
+  loginForm: "Login Form",
+  packages: "Package Cards",
+  socialLinks: "Social Links",
+  contactInfo: "Contact Info",
+  termsBox: "Terms & Conditions",
 };
 
+const DEFAULT_PACKAGES: Package[] = [
+  { name: "Mini 10", code: "mini10", price: "50", speed: "3M/3M", days: "10", devices: "1" },
+  { name: "Mini 20", code: "mini20", price: "90", speed: "3M/3M", days: "20", devices: "1" },
+  { name: "Basic", code: "basic", price: "100", speed: "5M/5M", days: "30", devices: "1" },
+  { name: "Pro", code: "pro", price: "200", speed: "10M/10M", days: "30", devices: "2" },
+  { name: "Ultra", code: "ultra", price: "500", speed: "20M/20M", days: "30", devices: "4" },
+];
+
+const DEFAULT_SECTIONS: TemplateSections = {
+  logo: true, headline: true, hero: false, trialBanner: true,
+  loginForm: true, packages: true, socialLinks: true,
+  contactInfo: true, termsBox: false,
+};
+
+const EMPTY_FORM: TemplateForm = {
+  name: "", title: "", companyName: "",
+  logoUrl: "", faviconUrl: "", backgroundUrl: "", heroUrl: "",
+  primaryColor: "#06b6d4", backgroundColor: "#0c0f1a", accentColor: "#3b82f6",
+  fontFamily: "system-ui,sans-serif",
+  headlineEn: "NEXT GEN INTERNET", headlineBn: "নেক্সট জেন ইন্টারনেট",
+  subheadline: "Fast • Reliable • Affordable",
+  borderRadius: 12, cardOpacity: 0.9, buttonStyle: "gradient", shadowStyle: "glow",
+  sections: DEFAULT_SECTIONS,
+  trialBanner: "7 Days Free Trial", whatsappLink: "", telegramLink: "", paymentNumber: "",
+  termsText: "By connecting you agree to our terms of service.",
+  metaDescription: "",
+  packages: DEFAULT_PACKAGES,
+  htmlContent: "", cssContent: "", isDefault: false,
+};
+
+// ─── Preset Templates ─────────────────────────────────────────────────────────
+
+interface PresetDef {
+  id: string;
+  label: string;
+  description: string;
+  colors: string[];
+  overrides: Partial<TemplateForm>;
+}
+
+const PRESETS: PresetDef[] = [
+  {
+    id: "modern", label: "Modern Dark", description: "Cyan glow, dark slate, rounded cards",
+    colors: ["#06b6d4", "#0c0f1a"],
+    overrides: { primaryColor: "#06b6d4", backgroundColor: "#0c0f1a", accentColor: "#3b82f6", borderRadius: 16, buttonStyle: "gradient", shadowStyle: "glow" },
+  },
+  {
+    id: "ispro", label: "ISP Pro", description: "Professional navy, clean grid lines",
+    colors: ["#3b82f6", "#0a1628"],
+    overrides: { primaryColor: "#3b82f6", backgroundColor: "#0a1628", accentColor: "#60a5fa", borderRadius: 8, buttonStyle: "solid", shadowStyle: "soft" },
+  },
+  {
+    id: "minimal", label: "Minimal Light", description: "Light bg, clean indigo, minimal shadows",
+    colors: ["#6366f1", "#f8fafc"],
+    overrides: { primaryColor: "#6366f1", backgroundColor: "#f8fafc", accentColor: "#818cf8", borderRadius: 12, buttonStyle: "solid", shadowStyle: "soft" },
+  },
+  {
+    id: "corporate", label: "Corporate Gold", description: "Dark charcoal, amber/gold accent",
+    colors: ["#d97706", "#111111"],
+    overrides: { primaryColor: "#d97706", backgroundColor: "#111111", accentColor: "#f59e0b", borderRadius: 6, buttonStyle: "solid", shadowStyle: "none", fontFamily: "'Roboto',system-ui,sans-serif" },
+  },
+  {
+    id: "gaming", label: "Gaming Cyber", description: "Neon green on black, cyber aesthetic",
+    colors: ["#00ff88", "#000000"],
+    overrides: { primaryColor: "#00ff88", backgroundColor: "#000000", accentColor: "#00ccff", borderRadius: 2, buttonStyle: "outline", shadowStyle: "glow", fontFamily: "'Rajdhani',system-ui,sans-serif", headlineEn: "CYBER CONNECT", headlineBn: "সাইবার কানেক্ট" },
+  },
+  {
+    id: "hotel", label: "Hotel WiFi", description: "Warm brown, orange primary, elegant feel",
+    colors: ["#fb923c", "#2c1810"],
+    overrides: { primaryColor: "#fb923c", backgroundColor: "#2c1810", accentColor: "#fbbf24", borderRadius: 20, buttonStyle: "gradient", shadowStyle: "soft", headlineEn: "Welcome to Our WiFi", headlineBn: "আমাদের ওয়াইফাইতে স্বাগতম" },
+  },
+];
+
+// ─── Security: HTML/CSS Sanitizer ─────────────────────────────────────────────
+
+function sanitizeHtml(raw: string): string {
+  return raw
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son\w+\s*=\s*["'][^"']*["']/gi, "")
+    .replace(/\son\w+\s*=\s*[^\s>]*/gi, "")
+    .replace(/javascript\s*:/gi, "about:")
+    .replace(/vbscript\s*:/gi, "about:")
+    .replace(/<iframe(?![^>]*srcdoc)[^>]*>/gi, "")
+    .replace(/expression\s*\(/gi, "");
+}
+
+function sanitizeCss(raw: string): string {
+  return raw
+    .replace(/expression\s*\(/gi, "")
+    .replace(/url\s*\(\s*['"]?\s*javascript/gi, "url(about:")
+    .replace(/@import\s+url\s*\(/gi, "/* @import */url(")
+    .replace(/-moz-binding/gi, "/* -moz-binding */");
+}
+
+// ─── Version History ──────────────────────────────────────────────────────────
+
+const VERSION_KEY = "isp_hotspot_versions";
+const MAX_VERSIONS = 10;
+
+function loadVersions(): VersionEntry[] {
+  try {
+    return JSON.parse(localStorage.getItem(VERSION_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveVersion(label: string, form: TemplateForm): void {
+  const versions = loadVersions();
+  versions.unshift({ ts: Date.now(), label, form });
+  localStorage.setItem(VERSION_KEY, JSON.stringify(versions.slice(0, MAX_VERSIONS)));
+}
+
+function deleteVersion(ts: number): void {
+  const versions = loadVersions().filter((v) => v.ts !== ts);
+  localStorage.setItem(VERSION_KEY, JSON.stringify(versions));
+}
+
+// ─── Template HTML/CSS Builder ────────────────────────────────────────────────
+
+function buildCss(f: TemplateForm): string {
+  const r = f.borderRadius;
+  const op = f.cardOpacity;
+  const font = f.fontFamily;
+  const primary = f.primaryColor;
+  const bg = f.backgroundColor;
+  const accent = f.accentColor;
+  const isLight = isLightColor(bg);
+  const textColor = isLight ? "#1e293b" : "#e5eefb";
+  const mutedColor = isLight ? "#64748b" : "#94a3b8";
+  const panelBg = isLight
+    ? `rgba(255,255,255,${op})`
+    : `rgba(15,23,42,${op})`;
+  const borderColor = isLight ? "rgba(0,0,0,0.12)" : "rgba(148,163,184,0.15)";
+
+  let btnCss = "";
+  if (f.buttonStyle === "gradient") {
+    btnCss = `background:linear-gradient(135deg,${primary},${accent});color:#fff;border:0;`;
+  } else if (f.buttonStyle === "outline") {
+    btnCss = `background:transparent;color:${primary};border:2px solid ${primary};`;
+  } else {
+    btnCss = `background:${primary};color:${isLight ? "#fff" : "#fff"};border:0;`;
+  }
+
+  let shadowCss = "";
+  if (f.shadowStyle === "glow") {
+    shadowCss = `box-shadow:0 0 24px ${primary}40,0 20px 50px rgba(0,0,0,0.4);`;
+  } else if (f.shadowStyle === "soft") {
+    shadowCss = `box-shadow:0 8px 32px rgba(0,0,0,0.2);`;
+  }
+
+  const bgImage = f.backgroundUrl
+    ? `url("${f.backgroundUrl}") center/cover no-repeat,`
+    : "";
+
+  return `:root{--p:${primary};--bg:${bg};--accent:${accent};--text:${textColor};--muted:${mutedColor};--panel:${panelBg};--border:${borderColor};--r:${r}px;--font:${font}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{min-height:100vh;display:grid;place-items:center;background:${bgImage}linear-gradient(180deg,rgba(0,0,0,.6),rgba(0,0,0,.7)),${bg};font-family:var(--font);color:var(--text);padding:14px}
+.shell{width:min(960px,100%);display:grid;grid-template-columns:minmax(280px,380px) 1fr;gap:16px;align-items:start}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:22px;${shadowCss}}
+.brand-logo{max-width:130px;max-height:52px;object-fit:contain;display:block;margin-bottom:12px}
+.brand-mark{display:grid;place-items:center;width:52px;height:52px;border-radius:calc(var(--r) - 2px);background:var(--p);font-weight:900;color:#fff;font-size:20px;margin-bottom:12px}
+.headline-en{font-size:clamp(20px,4vw,30px);font-weight:900;line-height:1.1;margin-bottom:4px}
+.headline-bn{font-size:clamp(14px,3vw,18px);color:var(--muted);margin-bottom:6px}
+.subheadline{font-size:13px;color:var(--muted);margin-bottom:14px}
+.hero-img{width:90px;height:72px;object-fit:contain;float:right;margin:0 0 8px 10px}
+.error-box{border:1px solid #f87171;background:rgba(127,29,29,.5);color:#fecaca;border-radius:calc(var(--r) - 4px);padding:10px 12px;margin-bottom:14px;font-size:13px}
+.form-label{display:block;font-size:12px;color:var(--muted);font-weight:600;margin:0 0 10px}
+.form-input{display:block;width:100%;margin-top:5px;border:1px solid var(--border);background:rgba(0,0,0,.35);color:var(--text);border-radius:calc(var(--r) - 4px);padding:11px 14px;font-size:14px;outline:none;transition:border-color .2s}
+.form-input:focus{border-color:var(--p)}
+.submit-btn{display:block;text-align:center;width:100%;border-radius:calc(var(--r) - 2px);padding:12px;font-size:14px;font-weight:700;cursor:pointer;transition:opacity .2s;${btnCss}}
+.submit-btn:hover{opacity:.88}
+.packages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.pkg-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:14px;${shadowCss}}
+.trial-card{grid-column:span 2;background:linear-gradient(135deg,${primary}22,${accent}22);border-color:${primary}55;text-align:center;padding:10px}
+.pkg-name{display:block;font-size:13px;font-weight:700;margin-bottom:4px}
+.pkg-price{display:block;font-size:22px;font-weight:900;color:var(--p)}
+.pkg-speed{display:block;font-size:11px;color:var(--muted);margin:4px 0 10px}
+.pkg-btn{display:block;text-align:center;border-radius:calc(var(--r) - 4px);padding:8px;font-size:12px;font-weight:700;text-decoration:none;${btnCss}}
+.social-row{display:flex;gap:10px;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)}
+.social-btn{flex:1;text-align:center;border-radius:calc(var(--r) - 4px);padding:8px 6px;font-size:12px;font-weight:600;text-decoration:none;background:var(--border);color:var(--text)}
+.contact-info{font-size:12px;color:var(--muted);margin-top:10px;text-align:center}
+.terms-box{font-size:11px;color:var(--muted);margin-top:12px;padding:8px 10px;border:1px solid var(--border);border-radius:calc(var(--r) - 4px);max-height:60px;overflow-y:auto}
+@media(max-width:740px){.shell{grid-template-columns:1fr}.panel{padding:14px}.packages{gap:6px}.headline-en{font-size:20px}.trial-card{grid-column:span 2}}`;
+}
+
+function buildHtml(f: TemplateForm): string {
+  const s = f.sections;
+  const company = f.companyName || "ISP";
+  const title = f.title || `${company} WiFi`;
+  const meta = f.metaDescription ? `\n  <meta name="description" content="${f.metaDescription.replace(/"/g, "&quot;")}"/>` : "";
+  const favicon = f.faviconUrl ? `\n  <link rel="icon" href="${f.faviconUrl}"/>` : "";
+
+  const logo = s.logo
+    ? (f.logoUrl
+      ? `<img class="brand-logo" src="${f.logoUrl}" alt="${company}"/>`
+      : `<div class="brand-mark">${company.slice(0, 2).toUpperCase()}</div>`)
+    : "";
+
+  const headline = s.headline
+    ? `<h1 class="headline-en" data-en="${f.headlineEn}" data-bn="${f.headlineBn}">${f.headlineEn}</h1>
+      <p class="headline-bn">${f.headlineBn}</p>
+      <p class="subheadline">${f.subheadline}</p>`
+    : "";
+
+  const hero = s.hero && f.heroUrl
+    ? `<img class="hero-img" src="${f.heroUrl}" alt=""/>`
+    : "";
+
+  const form = s.loginForm ? `$(if error)<div class="error-box">$(error)</div>$(endif)
+      <form action="$(link-login-only)" method="post">
+        <input type="hidden" name="dst" value="$(link-orig)"/>
+        <label class="form-label">Username<input class="form-input" name="username" autocomplete="username" required placeholder="Enter username"/></label>
+        <label class="form-label">Password<input class="form-input" name="password" type="password" autocomplete="current-password" required placeholder="Enter password"/></label>
+        <button class="submit-btn" type="submit">Connect Now</button>
+      </form>` : "";
+
+  const social = s.socialLinks && (f.whatsappLink || f.telegramLink)
+    ? `<div class="social-row">
+        ${f.whatsappLink ? `<a href="${f.whatsappLink}" class="social-btn" target="_blank">💬 WhatsApp</a>` : ""}
+        ${f.telegramLink ? `<a href="${f.telegramLink}" class="social-btn" target="_blank">✈️ Telegram</a>` : ""}
+      </div>` : "";
+
+  const contact = s.contactInfo && f.paymentNumber
+    ? `<p class="contact-info">📞 Payment: ${f.paymentNumber}</p>` : "";
+
+  const terms = s.termsBox && f.termsText
+    ? `<div class="terms-box">${f.termsText}</div>` : "";
+
+  const pkgs = f.packages.map((p) =>
+    `<div class="pkg-card">
+        <span class="pkg-name">${p.name}</span>
+        <span class="pkg-price">৳${p.price}</span>
+        <span class="pkg-speed">${p.speed} · ${p.days}d · ${p.devices} device${p.devices === "1" ? "" : "s"}</span>
+        <a href="payment.html?pkg=${p.code}" class="pkg-btn">Buy Now</a>
+      </div>`,
+  ).join("\n      ");
+
+  const trial = s.trialBanner
+    ? `<div class="pkg-card trial-card">
+        <strong>🎁 ${f.trialBanner}</strong>
+        <span style="font-size:12px;color:var(--muted);display:block;margin-top:4px">Start instantly · No payment</span>
+      </div>` : "";
+
+  const packages = s.packages
+    ? `<section class="packages">${trial}\n      ${pkgs}</section>` : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>${favicon}
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>${title}</title>${meta}
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div class="shell">
+    <section class="panel">
+      ${logo}${hero}
+      ${headline}
+      ${form}
+      ${social}
+      ${contact}
+      ${terms}
+    </section>
+    ${packages}
+  </div>
+  <script>
+    (function(){
+      var k=(navigator.language||"").toLowerCase().startsWith("bn")?"bn":"en";
+      document.querySelectorAll("[data-"+k+"]").forEach(function(el){el.textContent=el.getAttribute("data-"+k);});
+    }());
+  </script>
+</body>
+</html>`;
+}
+
+function buildPreviewDoc(f: TemplateForm, theme: "dark" | "light"): string {
+  const html = sanitizeHtml(f.htmlContent || buildHtml(f));
+  let css = sanitizeCss(f.cssContent || buildCss(f));
+  if (theme === "light" && !f.htmlContent) {
+    css += "\nbody{filter:none}";
+  } else if (theme === "light") {
+    css += "\nbody{background:#f8fafc!important;color:#1e293b!important}";
+  }
+  const googleFont = FONT_OPTIONS.find((opt) => opt.value === f.fontFamily);
+  const fontName = googleFont?.label && !googleFont.label.includes("System")
+    ? `<link rel="preconnect" href="https://fonts.googleapis.com"/><link href="https://fonts.googleapis.com/css2?family=${encodeURIComponent(googleFont.label)}&display=swap" rel="stylesheet"/>`
+    : "";
+  return html.replace("</head>", `${fontName}<style>${css}</style></head>`);
+}
+
+function isLightColor(hex: string): boolean {
+  const c = hex.replace("#", "");
+  const r = parseInt(c.slice(0, 2), 16);
+  const g = parseInt(c.slice(2, 4), 16);
+  const b = parseInt(c.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+}
+
+// ─── API payload builder ──────────────────────────────────────────────────────
+
+function toApiPayload(f: TemplateForm) {
+  const generated = !f.htmlContent;
+  const htmlContent = generated ? buildHtml(f) : sanitizeHtml(f.htmlContent);
+  const cssContent = generated ? buildCss(f) : sanitizeCss(f.cssContent);
+  const logoUrl = /^https?:\/\//i.test(f.logoUrl) || /^data:image\//i.test(f.logoUrl) ? f.logoUrl : undefined;
+  return {
+    name: f.name,
+    title: f.title || undefined,
+    companyName: f.companyName || undefined,
+    logoUrl,
+    primaryColor: f.primaryColor,
+    backgroundColor: f.backgroundColor,
+    htmlContent,
+    cssContent,
+    isDefault: Boolean(f.isDefault),
+  };
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ColorInput({ label, id, value, onChange }: { label: string; id: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground mb-1.5">{label}</label>
+      <div className="flex gap-2">
+        <input id={id} type="color" value={value} onChange={(e) => onChange(e.target.value)}
+          className="h-9 w-12 rounded border border-input bg-transparent cursor-pointer p-0.5" />
+        <Input value={value} onChange={(e) => onChange(e.target.value)} className="flex-1 font-mono text-xs" maxLength={7} />
+      </div>
+    </div>
+  );
+}
+
+function RangeInput({ label, value, min, max, step = 1, unit = "", onChange }: { label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-1.5">
+        <span className="text-muted-foreground font-medium">{label}</span>
+        <span className="text-foreground font-semibold">{value}{unit}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-primary" />
+    </div>
+  );
+}
+
+function SectionToggle({ sections, onChange }: { sections: TemplateSections; onChange: (s: TemplateSections) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-1.5">
+      {(Object.keys(SECTION_LABELS) as Array<keyof TemplateSections>).map((key) => (
+        <label key={key} className="flex items-center gap-2 text-xs cursor-pointer p-2 rounded-md border border-border hover:bg-secondary/50 transition-colors select-none">
+          <input type="checkbox" className="accent-primary w-3.5 h-3.5" checked={sections[key]}
+            onChange={(e) => onChange({ ...sections, [key]: e.target.checked })} />
+          <span className="truncate">{SECTION_LABELS[key]}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function PackageEditor({ packages, onChange }: { packages: Package[]; onChange: (p: Package[]) => void }) {
+  const move = (i: number, dir: -1 | 1) => {
+    const next = [...packages];
+    [next[i], next[i + dir]] = [next[i + dir], next[i]];
+    onChange(next);
+  };
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-medium text-muted-foreground">Packages</span>
+        <Button type="button" size="sm" variant="outline"
+          onClick={() => onChange([...packages, { name: "New", code: "new", price: "0", speed: "5M/5M", days: "30", devices: "1" }])}>
+          <Plus size={12} /> Add
+        </Button>
+      </div>
+      {packages.map((pkg, i) => (
+        <div key={i} className="grid grid-cols-[1fr_70px_80px_50px_44px_62px] gap-1 items-center">
+          {(["name", "price", "speed", "days", "devices"] as const).map((k) => (
+            <Input key={k} value={pkg[k]} placeholder={k}
+              onChange={(e) => {
+                const next = [...packages];
+                next[i] = { ...pkg, [k]: e.target.value, ...(k === "name" ? { code: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, "") } : {}) };
+                onChange(next);
+              }} />
+          ))}
+          <div className="flex gap-0.5">
+            <button type="button" onClick={() => i > 0 && move(i, -1)} className="p-1 rounded hover:bg-secondary disabled:opacity-30" disabled={i === 0}><ChevronUp size={11} /></button>
+            <button type="button" onClick={() => i < packages.length - 1 && move(i, 1)} className="p-1 rounded hover:bg-secondary disabled:opacity-30" disabled={i === packages.length - 1}><ChevronDown size={11} /></button>
+            <button type="button" onClick={() => onChange(packages.filter((_, j) => j !== i))} className="p-1 rounded hover:bg-destructive/20"><Trash2 size={11} /></button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PresetLibrary({ onApply }: { onApply: (p: PresetDef) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {PRESETS.map((p) => (
+        <button key={p.id} type="button" onClick={() => onApply(p)}
+          className="relative rounded-xl border border-border bg-card p-3 text-left hover:border-primary/50 hover:bg-secondary/50 transition-all group">
+          <div className="h-14 rounded-lg mb-2 overflow-hidden"
+            style={{ background: `linear-gradient(135deg,${p.colors[1]},${p.colors[1]} 60%,${p.colors[0]}33)` }}>
+            <div className="h-full flex items-center px-3 gap-2">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-black text-xs"
+                style={{ background: p.colors[0] }}>Wi</div>
+              <div>
+                <div className="h-2 w-16 rounded" style={{ background: p.colors[0], opacity: 0.7 }} />
+                <div className="h-1.5 w-10 rounded mt-1" style={{ background: p.colors[0], opacity: 0.3 }} />
+              </div>
+            </div>
+          </div>
+          <p className="text-xs font-semibold">{p.label}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">{p.description}</p>
+          <div className="flex gap-1 mt-1.5">
+            {p.colors.map((c, i) => (
+              <div key={i} className="w-4 h-4 rounded-full border border-border" style={{ background: c }} />
+            ))}
+          </div>
+          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <span className="text-[10px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded">Apply</span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function VersionHistoryPanel({ currentForm, onRestore, onClose }: { currentForm: TemplateForm; onRestore: (f: TemplateForm) => void; onClose: () => void }) {
+  const [versions, setVersions] = useState<VersionEntry[]>(loadVersions);
+  const [label, setLabel] = useState("");
+
+  const save = () => {
+    const name = label.trim() || `Version ${new Date().toLocaleTimeString()}`;
+    saveVersion(name, currentForm);
+    setVersions(loadVersions());
+    setLabel("");
+    toast.success("Version saved");
+  };
+
+  const del = (ts: number) => {
+    deleteVersion(ts);
+    setVersions(loadVersions());
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <Input placeholder="Version label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <Button size="sm" onClick={save}><Save size={13} /> Save Now</Button>
+      </div>
+      {versions.length === 0 && <p className="text-xs text-muted-foreground text-center py-6">No versions saved yet</p>}
+      <div className="space-y-1.5 max-h-72 overflow-y-auto">
+        {versions.map((v) => (
+          <div key={v.ts} className="flex items-center gap-2 p-2 rounded-lg border border-border hover:bg-secondary/50">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium truncate">{v.label}</p>
+              <p className="text-[10px] text-muted-foreground">{new Date(v.ts).toLocaleString()}</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => { onRestore(v.form); onClose(); toast.success("Version restored"); }}>
+              <RotateCcw size={12} /> Restore
+            </Button>
+            <button type="button" onClick={() => del(v.ts)} className="text-muted-foreground hover:text-destructive p-1">
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function HotspotTemplates() {
-  const { data, refetch, isLoading } = trpc.hotspot.listTemplates.useQuery();
+  const { data: templates, refetch, isLoading } = trpc.hotspot.listTemplates.useQuery();
   const { data: routers } = trpc.routerMgmt.list.useQuery();
+
   const [showAdd, setShowAdd] = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
-  const [form, setForm] = useState(EDITOR_EMPTY);
-  const [routerId, setRouterId] = useState("");
+  const [fullscreenPreview, setFullscreenPreview] = useState(false);
+  const [form, setForm] = useState<TemplateForm>(EMPTY_FORM);
+  const [tab, setTab] = useState<EditorTab>("visual");
   const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
-  const selectedRouter = routerId || routers?.find((router) => router.isDefault)?.id || routers?.[0]?.id || "";
+  const [routerId, setRouterId] = useState("");
+
+  const selectedRouter = routerId
+    || routers?.find((r) => r.isDefault)?.id
+    || routers?.[0]?.id
+    || "";
 
   const create = trpc.hotspot.createTemplate.useMutation({
-    onSuccess: () => { refetch(); setShowAdd(false); setForm(EDITOR_EMPTY); toast.success("Template created"); },
+    onSuccess: () => { refetch(); setShowAdd(false); setForm(EMPTY_FORM); toast.success("Template created"); },
     onError: (e) => toast.error(e.message),
   });
   const update = trpc.hotspot.updateTemplate.useMutation({
@@ -50,320 +617,452 @@ export default function HotspotTemplates() {
     onError: (e) => toast.error(e.message),
   });
   const del = trpc.hotspot.deleteTemplate.useMutation({
-    onSuccess: () => { refetch(); toast.success("Template deleted"); },
+    onSuccess: () => { refetch(); toast.success("Deleted"); },
   });
 
-  const previewTmpl = data?.find((t) => t.id === previewId);
-  const previewHtml = previewTmpl ? buildPreviewHtml(previewTmpl, previewTheme) : "";
+  const previewTmpl = useMemo(() => templates?.find((t) => t.id === previewId), [templates, previewId]);
 
-  function field(key: keyof typeof form, label: string, id: string) {
-    return (
-      <div>
-        <label htmlFor={id} className="block text-xs font-medium text-muted-foreground mb-1.5">{label}</label>
-        <Input id={id} value={String(form[key])} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />
-      </div>
-    );
-  }
+  const applyPreset = useCallback((preset: PresetDef) => {
+    setForm((prev) => ({
+      ...prev,
+      ...preset.overrides,
+      name: prev.name || preset.label,
+      htmlContent: "",
+      cssContent: "",
+    }));
+    toast.success(`${preset.label} template applied`);
+  }, []);
+
+  const livePreviewDoc = useMemo(() => buildPreviewDoc(form, previewTheme), [form, previewTheme]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error("Template name is required"); return; }
+    saveVersion("Before create: " + form.name, form);
+    create.mutate(toApiPayload(form));
+  };
+
+  const handleLogoUpload = (file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setForm((prev) => ({ ...prev, logoUrl: String(reader.result), htmlContent: "", cssContent: "" }));
+    reader.readAsDataURL(file);
+  };
+
+  const handleImageUpload = (file: File | undefined, key: "backgroundUrl" | "heroUrl" | "faviconUrl") => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setForm((prev) => ({ ...prev, [key]: String(reader.result), htmlContent: "", cssContent: "" }));
+    reader.readAsDataURL(file);
+  };
+
+  const setF = useCallback(<K extends keyof TemplateForm>(key: K, val: TemplateForm[K]) => {
+    setForm((prev) => ({ ...prev, [key]: val, ...(key !== "htmlContent" && key !== "cssContent" ? { htmlContent: "", cssContent: "" } : {}) }));
+  }, []);
+
+  const TAB_ICONS: Record<EditorTab, React.ReactNode> = {
+    visual: <Palette size={13} />,
+    library: <Layout size={13} />,
+    code: <Code2 size={13} />,
+    seo: <Globe size={13} />,
+  };
 
   return (
     <div className="space-y-5">
+      {/* Page Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold">Hotspot Templates</h1>
-          <p className="text-muted-foreground text-sm">Custom WiFi login page designs</p>
+          <h1 className="text-xl font-bold">Hotspot Template Builder</h1>
+          <p className="text-muted-foreground text-sm">Design and publish custom MikroTik login pages</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Select title="Publish router" value={selectedRouter} onChange={(e) => setRouterId(e.target.value)} className="w-48">
-            {routers?.map((router) => <option key={router.id} value={router.id}>{router.name}</option>)}
+          <Select title="Publish router" value={selectedRouter} onChange={(e) => setRouterId(e.target.value)} className="w-44">
+            {routers?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </Select>
-          <Button size="sm" onClick={() => { setForm({ ...EDITOR_EMPTY, ...starterTemplate(EDITOR_EMPTY) }); setShowAdd(true); }}><Plus size={14} /> New Template</Button>
+          <Button size="sm" onClick={() => { setForm(EMPTY_FORM); setTab("library"); setShowAdd(true); }}>
+            <Plus size={14} /> New Template
+          </Button>
         </div>
       </div>
 
-      {isLoading && <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>}
+      {/* Template Grid */}
+      {isLoading && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <Card key={i}><div className="h-40 animate-pulse bg-secondary/50 rounded-xl" /></Card>
+          ))}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {data?.map((t) => (
-          <Card key={t.id} className={t.isDefault ? "border-blue-500/40" : ""}>
-            {/* Color preview bar */}
-            <div className="h-2 rounded-t-xl" style={{ background: `linear-gradient(to right, ${t.primaryColor ?? "#3b82f6"}, ${t.backgroundColor ?? "#0f172a"})` }} />
-            <CardContent className="p-5 space-y-3">
+        {templates?.map((t) => (
+          <Card key={t.id} className={t.isDefault ? "border-blue-500/40 shadow-blue-500/10 shadow-lg" : ""}>
+            <div className="h-2 rounded-t-xl"
+              style={{ background: `linear-gradient(to right, ${t.primaryColor ?? "#3b82f6"}, ${t.backgroundColor ?? "#0f172a"})` }} />
+            <CardContent className="p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="font-semibold">{t.name}</p>
-                  <p className="text-xs text-muted-foreground">{t.companyName ?? "No company name"}</p>
+                  <p className="font-semibold text-sm">{t.name}</p>
+                  <p className="text-xs text-muted-foreground">{t.companyName ?? "—"}</p>
                 </div>
-                {t.isDefault ? <Badge variant="info">Default</Badge> : null}
+                {t.isDefault && <Badge variant="info">Default</Badge>}
               </div>
-
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded border border-border" style={{ background: t.primaryColor ?? "#3b82f6" }} />
-                <span className="text-xs text-muted-foreground">{t.primaryColor}</span>
-                <div className="w-5 h-5 rounded border border-border ml-2" style={{ background: t.backgroundColor ?? "#0f172a" }} />
-                <span className="text-xs text-muted-foreground">{t.backgroundColor}</span>
+                <div className="w-5 h-5 rounded-full border border-border" style={{ background: t.primaryColor ?? "#3b82f6" }} />
+                <span className="text-xs text-muted-foreground font-mono">{t.primaryColor}</span>
+                <div className="w-5 h-5 rounded-full border border-border ml-1" style={{ background: t.backgroundColor ?? "#0f172a" }} />
+                <span className="text-xs text-muted-foreground font-mono">{t.backgroundColor}</span>
               </div>
-
-              <div className="flex gap-2 pt-1 border-t border-border">
-                <Button size="sm" variant="outline" className="flex-1"
-                  onClick={() => setPreviewId(t.id)}>
-                  <Eye size={13} /> Preview
+              <div className="flex gap-1.5 pt-1 border-t border-border">
+                <Button size="sm" variant="outline" className="flex-1" onClick={() => setPreviewId(t.id)}>
+                  <Eye size={12} /> Preview
                 </Button>
-                <Button size="sm" variant="outline"
-                  onClick={() => create.mutate(sanitizeTemplatePayload({ ...cloneTemplate(t), name: `${t.name} ${new Date().toISOString().slice(0, 10)}` }))}
-                  title="Save version">
-                  <Save size={13} />
+                <Button size="sm" variant="outline" title="Save as version"
+                  onClick={() => { create.mutate({ name: `${t.name} copy`, primaryColor: t.primaryColor ?? "#06b6d4", backgroundColor: t.backgroundColor ?? "#0c0f1a", htmlContent: t.htmlContent ?? "", cssContent: t.cssContent ?? "", isDefault: false, title: t.title ?? undefined, companyName: t.companyName ?? undefined, logoUrl: t.logoUrl ?? undefined }); }}>
+                  <Save size={12} />
                 </Button>
-                <Button size="sm" variant="secondary"
-                  disabled={deploy.isPending || !selectedRouter}
-                  onClick={() => deploy.mutate({ id: t.id, routerId: selectedRouter })}
-                  title="Publish to MikroTik hotspot">
-                  <Upload size={13} />
+                <Button size="sm" variant="secondary" disabled={deploy.isPending || !selectedRouter}
+                  title="Publish to MikroTik"
+                  onClick={() => deploy.mutate({ id: t.id, routerId: selectedRouter })}>
+                  <Upload size={12} />
                 </Button>
                 <Button size="sm" variant="ghost"
                   onClick={() => { if (globalThis.confirm(`Delete "${t.name}"?`)) del.mutate({ id: t.id }); }}>
-                  <Trash2 size={13} className="text-muted-foreground hover:text-destructive" />
+                  <Trash2 size={12} className="text-muted-foreground" />
                 </Button>
               </div>
             </CardContent>
           </Card>
         ))}
-        {!isLoading && !data?.length && (
+        {!isLoading && !templates?.length && (
           <div className="col-span-3">
-            <Card><CardContent className="py-16"><Empty message="No templates — create your first hotspot login page" /></CardContent></Card>
+            <Card><CardContent className="py-16"><Empty message="No templates yet — click 'New Template' to start building" /></CardContent></Card>
           </div>
         )}
       </div>
 
-      {/* Create Modal */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Create Hotspot Template" className="max-w-6xl max-h-[92vh] overflow-auto">
-        <form onSubmit={(e) => { e.preventDefault(); create.mutate(sanitizeTemplatePayload({ ...form, ...starterTemplate(form) })); }} className="space-y-3">
-          <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                {field("name", "Template Name *", "ht-name")}
-                {field("companyName", "Company Name", "ht-company")}
-              </div>
-              {field("title", "Page Title", "ht-title")}
-              <div>
-                <label htmlFor="ht-logo" className="block text-xs font-medium text-muted-foreground mb-1.5">Logo Upload</label>
-                <Input id="ht-logo" type="file" accept="image/*" onChange={(e) => handleLogoUpload(e.currentTarget.files?.[0], setForm, form)} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="ht-bg-upload" className="block text-xs font-medium text-muted-foreground mb-1.5">Background Upload</label>
-                  <Input id="ht-bg-upload" type="file" accept="image/*" onChange={(e) => handleImageUpload(e.currentTarget.files?.[0], "backgroundUrl", setForm, form)} />
-                </div>
-                <div>
-                  <label htmlFor="ht-hero-upload" className="block text-xs font-medium text-muted-foreground mb-1.5">Hero Image Upload</label>
-                  <Input id="ht-hero-upload" type="file" accept="image/*" onChange={(e) => handleImageUpload(e.currentTarget.files?.[0], "heroUrl", setForm, form)} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Input value={form.trialBanner} onChange={(e) => setForm({ ...form, trialBanner: e.target.value })} placeholder="Trial banner" />
-                <Input value={form.paymentNumber} onChange={(e) => setForm({ ...form, paymentNumber: e.target.value })} placeholder="Payment number" />
-                <Input value={form.whatsappLink} onChange={(e) => setForm({ ...form, whatsappLink: e.target.value })} placeholder="WhatsApp link" />
-                <Input value={form.telegramLink} onChange={(e) => setForm({ ...form, telegramLink: e.target.value })} placeholder="Telegram link" />
-                <Input value={form.englishText} onChange={(e) => setForm({ ...form, englishText: e.target.value })} placeholder="English headline" />
-                <Input value={form.banglaText} onChange={(e) => setForm({ ...form, banglaText: e.target.value })} placeholder="Bengali headline" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="ht-primary" className="block text-xs font-medium text-muted-foreground mb-1.5">Primary Color</label>
-                  <div className="flex gap-2">
-                    <input id="ht-primary" type="color" value={form.primaryColor}
-                      onChange={(e) => setForm({ ...form, primaryColor: e.target.value })}
-                      className="h-9 w-12 rounded border border-input bg-transparent cursor-pointer" />
-                    <Input value={form.primaryColor} onChange={(e) => setForm({ ...form, primaryColor: e.target.value })} className="flex-1" />
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="ht-bg" className="block text-xs font-medium text-muted-foreground mb-1.5">Background Color</label>
-                  <div className="flex gap-2">
-                    <input id="ht-bg" type="color" value={form.backgroundColor}
-                      onChange={(e) => setForm({ ...form, backgroundColor: e.target.value })}
-                      className="h-9 w-12 rounded border border-input bg-transparent cursor-pointer" />
-                    <Input value={form.backgroundColor} onChange={(e) => setForm({ ...form, backgroundColor: e.target.value })} className="flex-1" />
-                  </div>
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input type="checkbox" className="accent-blue-500" checked={form.isDefault}
-                  onChange={(e) => setForm({ ...form, isDefault: e.target.checked })} />
-                <span>Set as default template</span>
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" onClick={() => setForm({ ...form, ...starterTemplate(form) })}><Code2 size={14} /> Generate Pages</Button>
-                <Button type="button" variant="outline" onClick={() => { localStorage.setItem("hotspotTemplateDraft", JSON.stringify(form)); toast.success("Draft saved"); }}><Save size={14} /> Save Draft</Button>
-                <Button type="button" variant="outline" onClick={() => setForm(JSON.parse(localStorage.getItem("hotspotTemplateDraft") || "null") || { ...EDITOR_EMPTY, ...starterTemplate(EDITOR_EMPTY) })}><RotateCcw size={14} /> Rollback</Button>
-                <Button type="button" variant="outline" onClick={() => setForm({ ...EDITOR_EMPTY, ...starterTemplate(EDITOR_EMPTY) })}>Reset</Button>
-              </div>
-              <div className="rounded-lg border border-border p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">Packages</span>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setForm({ ...form, packages: [...form.packages, { name: "New", code: "new", price: "0", speed: "3M/3M", days: "30", devices: "1" }] })}><Plus size={13} /> Add</Button>
-                </div>
-                {form.packages.map((pkg, index) => (
-                  <div key={`${pkg.code}-${index}`} className="grid grid-cols-[1fr_64px_72px_52px_42px_32px] gap-1">
-                    {(["name", "price", "speed", "days", "devices"] as const).map((key) => (
-                      <Input key={key} value={pkg[key]} onChange={(e) => {
-                        const packages = form.packages.slice();
-                        packages[index] = { ...pkg, [key]: e.target.value, code: key === "name" ? e.target.value.toLowerCase().replace(/[^a-z0-9]/g, "") : pkg.code };
-                        setForm({ ...form, packages });
-                      }} />
-                    ))}
-                    <Button type="button" size="icon" variant="ghost" onClick={() => setForm({ ...form, packages: form.packages.filter((_, i) => i !== index) })}><Trash2 size={13} /></Button>
-                  </div>
+      {/* ── Builder Modal ──────────────────────────────────────────────────── */}
+      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Hotspot Template Builder" className="max-w-7xl max-h-[96vh] overflow-hidden flex flex-col">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex flex-col min-h-0">
+
+          {/* Top bar */}
+          <div className="flex items-center gap-2 pb-3 border-b border-border flex-wrap">
+            <Input value={form.name} onChange={(e) => setF("name", e.target.value)}
+              placeholder="Template Name *" className="w-44" required />
+            <Input value={form.companyName} onChange={(e) => setF("companyName", e.target.value)}
+              placeholder="Company Name" className="w-36" />
+            <label className="flex items-center gap-2 text-xs cursor-pointer ml-auto">
+              <input type="checkbox" className="accent-primary" checked={form.isDefault}
+                onChange={(e) => setF("isDefault", e.target.checked)} />
+              <span>Set as default</span>
+            </label>
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowVersions(true)}>
+              <History size={13} /> Versions
+            </Button>
+            <Button type="submit" size="sm" disabled={create.isPending}>
+              {create.isPending ? "Creating…" : "Create"}
+            </Button>
+          </div>
+
+          {/* Body: left editor + right preview */}
+          <div className="flex-1 overflow-hidden grid grid-cols-[360px_1fr] gap-0 min-h-0">
+
+            {/* Left: Editor Tabs */}
+            <div className="border-r border-border flex flex-col min-h-0 overflow-hidden">
+              {/* Tab bar */}
+              <div className="flex border-b border-border">
+                {(["visual", "library", "code", "seo"] as EditorTab[]).map((t) => (
+                  <button key={t} type="button" onClick={() => setTab(t)}
+                    className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium transition-colors ${tab === t ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    {TAB_ICONS[t]}
+                    <span className="capitalize">{t}</span>
+                  </button>
                 ))}
               </div>
-            </div>
-            <div className="space-y-3 min-w-0">
-              <div>
-                <label htmlFor="ht-html" className="block text-xs font-medium text-muted-foreground mb-1.5">HTML / JS Editor</label>
-                <textarea id="ht-html" value={form.htmlContent} onChange={(e) => setForm({ ...form, htmlContent: e.target.value })} className="min-h-[260px] w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-              </div>
-              <div>
-                <label htmlFor="ht-css" className="block text-xs font-medium text-muted-foreground mb-1.5">CSS Editor</label>
-                <textarea id="ht-css" value={form.cssContent} onChange={(e) => setForm({ ...form, cssContent: e.target.value })} className="min-h-[160px] w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
-              </div>
-              <div className="rounded-lg border border-border p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">Live Preview</span>
-                  <div className="flex gap-1">
-                    <Button type="button" size="icon" variant={previewMode === "desktop" ? "secondary" : "ghost"} onClick={() => setPreviewMode("desktop")} title="Desktop preview"><MonitorSmartphone size={14} /></Button>
-                    <Button type="button" size="icon" variant={previewMode === "mobile" ? "secondary" : "ghost"} onClick={() => setPreviewMode("mobile")} title="Mobile preview"><Smartphone size={14} /></Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={() => setPreviewTheme(previewTheme === "dark" ? "light" : "dark")} title="Toggle dark/light preview"><SunMoon size={14} /></Button>
+
+              <div className="flex-1 overflow-y-auto p-3 space-y-4">
+
+                {/* ── VISUAL TAB ─────────────────────────────────────────── */}
+                {tab === "visual" && (
+                  <>
+                    {/* Brand */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5"><Image size={11} /> Brand Assets</h3>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Logo Image</label>
+                          <input type="file" accept="image/*" onChange={(e) => handleLogoUpload(e.currentTarget.files?.[0])}
+                            className="text-xs w-full file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-secondary file:text-xs file:cursor-pointer" />
+                          {form.logoUrl && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <img src={form.logoUrl} alt="logo" className="h-8 object-contain border border-border rounded" />
+                              <button type="button" className="text-xs text-destructive" onClick={() => setF("logoUrl", "")}>Remove</button>
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Background Image</label>
+                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e.currentTarget.files?.[0], "backgroundUrl")}
+                            className="text-xs w-full file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-secondary file:text-xs file:cursor-pointer" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Hero Image</label>
+                          <input type="file" accept="image/*" onChange={(e) => handleImageUpload(e.currentTarget.files?.[0], "heroUrl")}
+                            className="text-xs w-full file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-secondary file:text-xs file:cursor-pointer" />
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* Colors */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5"><Palette size={11} /> Colors</h3>
+                      <div className="grid grid-cols-2 gap-2">
+                        <ColorInput label="Primary" id="cp" value={form.primaryColor} onChange={(v) => setF("primaryColor", v)} />
+                        <ColorInput label="Background" id="cb" value={form.backgroundColor} onChange={(v) => setF("backgroundColor", v)} />
+                        <ColorInput label="Accent" id="ca" value={form.accentColor} onChange={(v) => setF("accentColor", v)} />
+                      </div>
+                    </section>
+
+                    {/* Typography */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5"><Type size={11} /> Text</h3>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Font Family</label>
+                          <Select value={form.fontFamily} onChange={(e) => setF("fontFamily", e.target.value)}>
+                            {FONT_OPTIONS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                          </Select>
+                        </div>
+                        <Input value={form.headlineEn} onChange={(e) => setF("headlineEn", e.target.value)} placeholder="English Headline" />
+                        <Input value={form.headlineBn} onChange={(e) => setF("headlineBn", e.target.value)} placeholder="বাংলা হেডলাইন" />
+                        <Input value={form.subheadline} onChange={(e) => setF("subheadline", e.target.value)} placeholder="Subheadline" />
+                        <Input value={form.trialBanner} onChange={(e) => setF("trialBanner", e.target.value)} placeholder="Trial banner text" />
+                      </div>
+                    </section>
+
+                    {/* Style */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5"><Sliders size={11} /> Style</h3>
+                      <div className="space-y-3">
+                        <RangeInput label="Border Radius" value={form.borderRadius} min={0} max={28} unit="px" onChange={(v) => setF("borderRadius", v)} />
+                        <RangeInput label="Card Opacity" value={form.cardOpacity} min={0.6} max={1.0} step={0.05} onChange={(v) => setF("cardOpacity", v)} />
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Button Style</label>
+                          <div className="flex gap-1">
+                            {(["solid", "gradient", "outline"] as ButtonStyle[]).map((s) => (
+                              <button key={s} type="button" onClick={() => setF("buttonStyle", s)}
+                                className={`flex-1 py-1.5 text-xs rounded border capitalize transition-colors ${form.buttonStyle === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs text-muted-foreground block mb-1.5">Shadow Style</label>
+                          <div className="flex gap-1">
+                            {(["none", "soft", "glow"] as ShadowStyle[]).map((s) => (
+                              <button key={s} type="button" onClick={() => setF("shadowStyle", s)}
+                                className={`flex-1 py-1.5 text-xs rounded border capitalize transition-colors ${form.shadowStyle === s ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    {/* Sections */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5"><Layers size={11} /> Sections</h3>
+                      <SectionToggle sections={form.sections} onChange={(s) => setF("sections", s)} />
+                    </section>
+
+                    {/* Contact */}
+                    <section>
+                      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Contact & Social</h3>
+                      <div className="space-y-2">
+                        <Input value={form.whatsappLink} onChange={(e) => setF("whatsappLink", e.target.value)} placeholder="https://wa.me/880..." />
+                        <Input value={form.telegramLink} onChange={(e) => setF("telegramLink", e.target.value)} placeholder="https://t.me/..." />
+                        <Input value={form.paymentNumber} onChange={(e) => setF("paymentNumber", e.target.value)} placeholder="Payment phone number" />
+                        <textarea value={form.termsText} onChange={(e) => setF("termsText", e.target.value)}
+                          placeholder="Terms & conditions text" rows={2}
+                          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs" />
+                      </div>
+                    </section>
+
+                    {/* Packages */}
+                    <section>
+                      <PackageEditor packages={form.packages} onChange={(p) => setF("packages", p)} />
+                    </section>
+                  </>
+                )}
+
+                {/* ── LIBRARY TAB ─────────────────────────────────────────── */}
+                {tab === "library" && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-3">Click a preset to instantly apply its colors and style.</p>
+                    <PresetLibrary onApply={applyPreset} />
+                    <div className="mt-4 pt-4 border-t border-border space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground">Page Title</p>
+                      <Input value={form.title} onChange={(e) => setF("title", e.target.value)} placeholder="Page <title> tag" />
+                    </div>
                   </div>
-                </div>
-                <iframe title="Hotspot live preview" srcDoc={buildPreviewHtml(form, previewTheme)} className={`${previewMode === "mobile" ? "mx-auto h-[520px] w-[320px]" : "h-[420px] w-full"} rounded-md border border-border bg-white`} />
+                )}
+
+                {/* ── CODE TAB ─────────────────────────────────────────────── */}
+                {tab === "code" && (
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setForm((p) => ({ ...p, htmlContent: buildHtml(p), cssContent: buildCss(p) }))}>
+                        <Code2 size={12} /> Generate from Visual
+                      </Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setForm((p) => ({ ...p, htmlContent: "", cssContent: "" }))}>
+                        Reset to visual
+                      </Button>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">HTML (login.html)</label>
+                      <textarea value={form.htmlContent} onChange={(e) => setForm((p) => ({ ...p, htmlContent: e.target.value }))}
+                        placeholder="Leave empty to auto-generate from visual settings"
+                        className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs min-h-[200px]" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">CSS (style.css)</label>
+                      <textarea value={form.cssContent} onChange={(e) => setForm((p) => ({ ...p, cssContent: e.target.value }))}
+                        placeholder="Leave empty to auto-generate from visual settings"
+                        className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs min-h-[140px]" />
+                    </div>
+                    <div className="p-2 rounded-md border border-amber-500/30 bg-amber-500/5 text-xs text-amber-300">
+                      ⚠️ Scripts and event handlers are stripped automatically for security.
+                    </div>
+                  </div>
+                )}
+
+                {/* ── SEO TAB ─────────────────────────────────────────────── */}
+                {tab === "seo" && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Page Title</label>
+                      <Input value={form.title} onChange={(e) => setF("title", e.target.value)} placeholder="ISP Name WiFi" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Meta Description</label>
+                      <textarea value={form.metaDescription} onChange={(e) => setF("metaDescription", e.target.value)}
+                        placeholder="Brief description for search engines (150-160 chars)"
+                        maxLength={160} rows={3}
+                        className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs" />
+                      <p className="text-[10px] text-muted-foreground mt-1">{form.metaDescription.length}/160</p>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground block mb-1.5">Favicon URL or Upload</label>
+                      <div className="space-y-1.5">
+                        <input type="file" accept="image/x-icon,image/png,image/svg+xml"
+                          onChange={(e) => handleImageUpload(e.currentTarget.files?.[0], "faviconUrl")}
+                          className="text-xs w-full file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-secondary file:text-xs file:cursor-pointer" />
+                        <Input value={form.faviconUrl} onChange={(e) => setF("faviconUrl", e.target.value)} placeholder="https://... or leave for upload" />
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-border p-3 space-y-1 text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground text-xs">Preview</p>
+                      <div className="flex items-center gap-2">
+                        {form.faviconUrl && <img src={form.faviconUrl} alt="favicon" className="w-4 h-4" />}
+                        <span className="font-medium text-foreground truncate">{form.title || form.companyName || "ISP WiFi"}</span>
+                      </div>
+                      {form.metaDescription && <p className="opacity-70 line-clamp-2">{form.metaDescription}</p>}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-          <div className="flex gap-2 pt-1">
-            <Button type="submit" className="flex-1" disabled={create.isPending}>{create.isPending ? "Creating…" : "Create Template"}</Button>
-            <Button type="button" variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+
+            {/* Right: Live Preview */}
+            <div className="flex flex-col min-h-0 overflow-hidden">
+              <div className="flex items-center gap-2 p-2 border-b border-border bg-background/50 flex-wrap">
+                <span className="text-xs text-muted-foreground font-medium">Live Preview</span>
+                <div className="flex gap-1 ml-auto">
+                  <Button type="button" size="sm" variant={previewMode === "desktop" ? "secondary" : "ghost"} onClick={() => setPreviewMode("desktop")} title="Desktop">
+                    <MonitorSmartphone size={13} />
+                  </Button>
+                  <Button type="button" size="sm" variant={previewMode === "mobile" ? "secondary" : "ghost"} onClick={() => setPreviewMode("mobile")} title="Mobile">
+                    <Smartphone size={13} />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewTheme(previewTheme === "dark" ? "light" : "dark")} title="Toggle theme">
+                    <SunMoon size={13} />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setFullscreenPreview(true)} title="Fullscreen">
+                    <Maximize2 size={13} />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto flex items-start justify-center p-4 bg-[#111] min-h-0">
+                <iframe
+                  key={livePreviewDoc.length}
+                  title="Hotspot live preview"
+                  srcDoc={livePreviewDoc}
+                  className={`rounded-lg border-2 border-border bg-white transition-all ${previewMode === "mobile" ? "w-[375px] h-[680px]" : "w-full h-full min-h-[500px]"}`}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
           </div>
         </form>
       </Modal>
 
-      {/* Preview Modal */}
-      <Modal open={!!previewId} onClose={() => setPreviewId(null)} title={`Preview: ${previewTmpl?.name}`} className="max-w-sm">
+      {/* ── Preview Modal ──────────────────────────────────────────────────── */}
+      <Modal open={!!previewId} onClose={() => setPreviewId(null)} title={`Preview: ${previewTmpl?.name}`} className="max-w-2xl">
         {previewTmpl && (
           <div className="space-y-3">
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => update.mutate({ ...sanitizeTemplatePayload(cloneTemplate(previewTmpl)), id: previewTmpl.id, isDefault: true })}><RotateCcw size={13} /> Rollback Default</Button>
-              <Button size="sm" disabled={deploy.isPending || !selectedRouter} onClick={() => deploy.mutate({ id: previewTmpl.id, routerId: selectedRouter })}><Upload size={13} /> Publish</Button>
+              <Button size="sm" variant="outline"
+                onClick={() => update.mutate({ id: previewTmpl.id, isDefault: true })}>
+                <Check size={13} /> Set Default
+              </Button>
+              <Button size="sm" disabled={deploy.isPending || !selectedRouter}
+                onClick={() => deploy.mutate({ id: previewTmpl.id, routerId: selectedRouter })}>
+                <Upload size={13} /> Publish to Router
+              </Button>
             </div>
-            <iframe title="Hotspot template preview" srcDoc={previewHtml} className="h-[520px] w-full rounded-lg border border-border bg-white" />
+            <iframe title="Template preview"
+              srcDoc={previewTmpl.htmlContent && previewTmpl.cssContent
+                ? previewTmpl.htmlContent.replace("</head>", `<style>${previewTmpl.cssContent}</style></head>`)
+                : buildPreviewDoc({ ...EMPTY_FORM, htmlContent: previewTmpl.htmlContent ?? "", cssContent: previewTmpl.cssContent ?? "", primaryColor: previewTmpl.primaryColor ?? "#06b6d4", backgroundColor: previewTmpl.backgroundColor ?? "#0c0f1a" }, "dark")
+              }
+              className="h-[520px] w-full rounded-lg border border-border bg-white"
+              sandbox="allow-same-origin"
+            />
           </div>
         )}
       </Modal>
+
+      {/* ── Fullscreen Preview ──────────────────────────────────────────────── */}
+      {fullscreenPreview && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col">
+          <div className="flex items-center gap-2 p-2 bg-card/90 backdrop-blur border-b border-border">
+            <span className="text-sm font-medium flex-1">Fullscreen Preview</span>
+            <div className="flex gap-1">
+              <Button type="button" size="sm" variant={previewMode === "desktop" ? "secondary" : "ghost"} onClick={() => setPreviewMode("desktop")}><MonitorSmartphone size={14} /></Button>
+              <Button type="button" size="sm" variant={previewMode === "mobile" ? "secondary" : "ghost"} onClick={() => setPreviewMode("mobile")}><Smartphone size={14} /></Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setPreviewTheme(previewTheme === "dark" ? "light" : "dark")}><SunMoon size={14} /></Button>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setFullscreenPreview(false)}><X size={16} /></Button>
+          </div>
+          <div className="flex-1 flex items-center justify-center bg-[#111] p-4 overflow-auto">
+            <iframe title="Fullscreen preview" srcDoc={livePreviewDoc}
+              className={`bg-white rounded-lg border-2 border-border ${previewMode === "mobile" ? "w-[390px] h-[844px]" : "w-full h-full"}`}
+              sandbox="allow-same-origin"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Version History Modal ───────────────────────────────────────────── */}
+      <Modal open={showVersions} onClose={() => setShowVersions(false)} title="Version History" className="max-w-lg">
+        <VersionHistoryPanel
+          currentForm={form}
+          onRestore={(f) => { setForm(f); setShowVersions(false); }}
+          onClose={() => setShowVersions(false)}
+        />
+      </Modal>
     </div>
   );
-}
-
-function cloneTemplate(t: any) {
-  return {
-    name: t.name,
-    title: t.title ?? "",
-    companyName: t.companyName ?? "",
-    logoUrl: t.logoUrl ?? "",
-    primaryColor: t.primaryColor ?? "#3b82f6",
-    backgroundColor: t.backgroundColor ?? "#0f172a",
-    htmlContent: t.htmlContent ?? "",
-    cssContent: t.cssContent ?? "",
-    isDefault: Boolean(t.isDefault),
-  };
-}
-
-function sanitizeTemplatePayload(template: any) {
-  const logoUrl = /^https?:\/\//i.test(template.logoUrl) || /^data:image\//i.test(template.logoUrl) ? template.logoUrl : undefined;
-  return {
-    name: template.name,
-    title: template.title,
-    companyName: template.companyName,
-    logoUrl,
-    primaryColor: template.primaryColor,
-    backgroundColor: template.backgroundColor,
-    htmlContent: template.htmlContent,
-    cssContent: template.cssContent,
-    isDefault: Boolean(template.isDefault),
-  };
-}
-
-function starterTemplate(base: any) {
-  const company = base.companyName || "ISP Nexus";
-  const title = base.title || `${company} Hotspot`;
-  const primary = base.primaryColor || "#3b82f6";
-  const background = base.backgroundColor || "#0f172a";
-  const logo = base.logoUrl ? `<img class="brand-logo" src="${base.logoUrl}" alt="${company}"/>` : `<div class="brand-mark">${company.slice(0, 2).toUpperCase()}</div>`;
-  const packages = Array.isArray(base.packages) && base.packages.length ? base.packages : DEFAULT_PACKAGES;
-  const packageCards = packages.map((pkg: any) => `<article>
-        <strong>${pkg.name}</strong>
-        <b>${pkg.price} BDT</b>
-        <span>${pkg.speed} • ${pkg.days} Days • ${pkg.devices} Device${String(pkg.devices) === "1" ? "" : "s"}</span>
-        <a href="payment.html?pkg=${pkg.code}">Buy Now</a>
-      </article>`).join("\n      ");
-  const heroImage = base.heroUrl ? `<img class="hero-img" src="${base.heroUrl}" alt="Hero"/>` : "";
-  return {
-    htmlContent: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>${title}</title>
-  <link rel="stylesheet" href="style.css"/>
-</head>
-<body>
-  <main class="shell">
-    <section class="login-panel">
-      ${logo}
-      <h1 data-en="${base.englishText || title}" data-bn="${base.banglaText || title}">${base.englishText || title}</h1>
-      <p class="muted">Secure broadband access for customers and trial users.</p>
-      ${heroImage}
-      \$(if error)<div class="error">\$(error)</div>\$(endif)
-      <form action="\$(link-login-only)" method="post">
-        <input type="hidden" name="dst" value="\$(link-orig)"/>
-        <label>Username<input name="username" autocomplete="username" required/></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required/></label>
-        <button type="submit">Connect</button>
-      </form>
-    </section>
-    <section class="packages">
-      <article class="trial"><strong>${base.trialBanner || "7 Days Free Trial"}</strong><span>Start instantly</span></article>
-      ${packageCards}
-    </section>
-  </main>
-  <script>
-    document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";
-    (function(){var key=(navigator.language||"").toLowerCase().indexOf("bn")===0?"bn":"en";Array.prototype.slice.call(document.querySelectorAll("[data-"+key+"]")).forEach(function(node){node.textContent=node.getAttribute("data-"+key);});}());
-  </script>
-</body>
-</html>`,
-    cssContent: `:root{--primary:${primary};--bg:${background};--text:#e5eefb;--muted:#94a3b8;--panel:rgba(15,23,42,.92)}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(180deg,rgba(3,7,18,.78),rgba(3,7,18,.96)),${base.backgroundUrl ? `url("${base.backgroundUrl}") center/cover no-repeat,` : ""}var(--bg);font-family:system-ui,sans-serif;color:var(--text);padding:14px}
-.shell{width:min(980px,100%);display:grid;grid-template-columns:minmax(280px,390px) 1fr;gap:14px;align-items:stretch}.login-panel,.packages article{border:1px solid rgba(34,211,238,.28);background:var(--panel);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.34)}.login-panel{padding:22px}.brand-logo{max-width:132px;max-height:54px;object-fit:contain}.brand-mark{display:grid;place-items:center;width:54px;height:54px;border-radius:16px;background:var(--primary);font-weight:900;color:white}.hero-img{width:96px;max-height:72px;object-fit:contain;float:right}h1{font-size:28px;margin:14px 0 8px}.muted{color:var(--muted);margin:0 0 16px}.error{border:1px solid #f87171;background:#7f1d1d66;color:#fecaca;border-radius:10px;padding:10px 12px;margin-bottom:14px}label{display:block;font-size:13px;color:var(--muted);margin:0 0 12px}input{display:block;width:100%;margin-top:6px;border:1px solid #334155;background:#020617;color:var(--text);border-radius:10px;padding:12px}button,.packages a{display:block;text-align:center;width:100%;border:0;border-radius:10px;background:var(--primary);color:white;font-weight:800;padding:10px;cursor:pointer;text-decoration:none}.packages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.packages article{padding:12px;min-height:96px}.packages strong,.packages b{display:block}.packages b{font-size:20px;color:#22d3ee}.packages span{display:block;margin:5px 0 8px;color:var(--muted);font-size:12px}.trial{grid-column:span 2}@media(max-width:760px){body{padding:8px}.shell{grid-template-columns:1fr}.login-panel{padding:14px}.packages{gap:6px}.packages article{min-height:82px;padding:8px}h1{font-size:22px}.muted{display:none}}`,
-  };
-}
-
-function buildPreviewHtml(t: any, theme: "dark" | "light") {
-  const html = t.htmlContent || starterTemplate(cloneTemplate(t)).htmlContent;
-  const css = t.cssContent || starterTemplate(cloneTemplate(t)).cssContent;
-  const themedCss = theme === "light"
-    ? `${css}\n:root{--bg:#f8fafc;--text:#0f172a;--muted:#475569;--panel:rgba(255,255,255,.94)}input{background:#fff;color:#0f172a}`
-    : css;
-  return html.replace("</head>", `<style>${themedCss}</style></head>`);
-}
-
-function handleLogoUpload(file: File | undefined, setForm: (value: typeof EDITOR_EMPTY) => void, form: typeof EDITOR_EMPTY) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => setForm({ ...form, logoUrl: String(reader.result), ...starterTemplate({ ...form, logoUrl: String(reader.result) }) });
-  reader.readAsDataURL(file);
-}
-
-function handleImageUpload(file: File | undefined, key: "backgroundUrl" | "heroUrl", setForm: (value: typeof EDITOR_EMPTY) => void, form: typeof EDITOR_EMPTY) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => setForm({ ...form, [key]: String(reader.result) });
-  reader.readAsDataURL(file);
 }

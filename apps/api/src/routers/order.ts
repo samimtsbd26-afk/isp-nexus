@@ -1,15 +1,17 @@
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import { TRPCError } from "@trpc/server";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { orders, invoices, subscriptions, customers, packages, routers, telegramConfigs } from "@isp-nexus/db";
 import { encryptText, decryptText } from "../lib/crypto.js";
 import { getMikroTikClient } from "../services/mikrotik/client.js";
 import { logger } from "../lib/logger.js";
 import { sendApprovalNotification } from "../services/telegram/bot.js";
-import { generateInvoicePdf } from "../services/billing/invoice.js";
+import { nextInvoiceNumber, generateInvoicePdf } from "../services/billing/invoice.js";
 import { ensureHotspotProfile, syncHotspotRadiusUser } from "../services/hotspot/provisioning.js";
+import { sendPaymentSuccessSms } from "../services/sms/index.js";
+import { emitOrgEvent } from "../boot.js";
 
 export const orderRouter = router({
   list: adminProcedure
@@ -115,7 +117,7 @@ export const orderRouter = router({
         reviewedAt: new Date(), reviewNote: input.note, updatedAt: new Date(),
       }).where(and(eq(orders.id, o.id), eq(orders.orgId, ctx.orgId)));
 
-      const invoiceNum = `INV-${Date.now()}`;
+      const invoiceNum = await nextInvoiceNumber(ctx.db, ctx.orgId);
       const [inv] = await ctx.db.insert(invoices).values({
         orgId: ctx.orgId, orderId: o.id, invoiceNumber: invoiceNum,
         customerId: o.customerId, amountBdt: o.amountBdt,
@@ -131,6 +133,30 @@ export const orderRouter = router({
       if (tgConfig && customer && pkg) {
         await sendApprovalNotification(tgConfig.chatId, customer, pkg);
       }
+
+      // Emit WebSocket event to all admins watching this org
+      emitOrgEvent(ctx.orgId, "order:approved", {
+        orgId: ctx.orgId,
+        orderId: o.id,
+        customerName: customer?.fullName ?? "Unknown",
+        amountBdt: o.amountBdt,
+        packageName: pkg?.name ?? "Unknown",
+      });
+
+      // Emit updated stats for real-time counter refresh
+      const [pendingCount] = await ctx.db.select({ n: sql<number>`count(*)` }).from(orders)
+        .where(and(eq(orders.orgId, ctx.orgId), eq(orders.status, "pending")));
+      emitOrgEvent(ctx.orgId, "order:stats", {
+        orgId: ctx.orgId,
+        pendingCount: Number(pendingCount?.n ?? 0),
+        todayRevenue: 0,
+        totalActiveSubscriptions: 0,
+      });
+
+      // Non-blocking SMS to customer
+      sendPaymentSuccessSms(ctx.orgId, o.id).catch((err) =>
+        logger.warn({ err, orderId: o.id }, "SMS send failed — non-blocking"),
+      );
 
       return { ok: true, invoiceId: inv.id };
     }),

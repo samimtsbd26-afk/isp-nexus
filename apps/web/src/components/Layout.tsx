@@ -5,6 +5,7 @@ import {
   Bot, Shield, Antenna, HardDrive, LogOut, Menu, X,
   ChevronDown, ChevronRight, Zap, Globe, Map, GitBranch, MonitorSpeaker,
   ScanLine, ReceiptText, ScrollText, Layers, Key, ActivitySquare, Settings,
+  MessageCircleQuestion,
 } from "lucide-react";
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
@@ -29,6 +30,7 @@ const navSections: NavSection[] = [
       { label: "Bandwidth", to: "/monitoring/bandwidth", icon: Gauge },
       { label: "Ping", to: "/monitoring/ping", icon: Radio },
       { label: "SFP", to: "/monitoring/sfp", icon: ScanLine },
+      { label: "Wireless", to: "/monitoring/wireless", icon: Wifi },
       { label: "Interfaces", to: "/interfaces", icon: MonitorSpeaker },
       { label: "Neighbors", to: "/neighbors", icon: Map },
     ],
@@ -60,7 +62,7 @@ const navSections: NavSection[] = [
       { label: "Orders", to: "/orders", icon: ShoppingCart },
       { label: "Invoices", to: "/invoices", icon: ReceiptText },
       { label: "Vouchers", to: "/vouchers", icon: Ticket },
-      { label: "Support", to: "/support", icon: Ticket },
+      { label: "Support", to: "/support", icon: MessageCircleQuestion },
     ],
   },
   {

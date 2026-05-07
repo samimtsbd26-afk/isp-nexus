@@ -1,6 +1,30 @@
 import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+import "jspdf-autotable";
 import type { Invoice, Customer, Order } from "@isp-nexus/db";
+import { eq, and } from "drizzle-orm";
+import { appSettings } from "@isp-nexus/db";
+
+export async function nextInvoiceNumber(db: any, orgId: string): Promise<string> {
+  const key = "invoice_counter";
+  
+  return db.transaction(async (tx: any) => {
+    const [existing] = await tx.select().from(appSettings)
+      .where(and(eq(appSettings.orgId, orgId), eq(appSettings.key, key))).limit(1);
+    
+    let nextVal: number;
+    if (existing) {
+      nextVal = parseInt(existing.value, 10) + 1;
+      await tx.update(appSettings)
+        .set({ value: String(nextVal), updatedAt: new Date() })
+        .where(eq(appSettings.id, existing.id));
+    } else {
+      nextVal = 1;
+      await tx.insert(appSettings).values({ orgId, key, value: String(nextVal) });
+    }
+    
+    return `INV-${String(nextVal).padStart(6, "0")}`;
+  });
+}
 
 export function generateInvoicePdf(invoice: Invoice, customer: Customer, order: Order): Buffer {
   const doc = new jsPDF();
@@ -22,7 +46,7 @@ export function generateInvoicePdf(invoice: Invoice, customer: Customer, order: 
   doc.text(customer.phone, 20, 76);
   if (customer.address) doc.text(customer.address, 20, 84);
 
-  autoTable(doc, {
+  (doc as any).autoTable({
     startY: 100,
     head: [["Description", "Method", "Amount (BDT)"]],
     body: [[

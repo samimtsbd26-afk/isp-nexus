@@ -363,6 +363,11 @@ export const customers = pgTable("customers", {
   passwordHash: text("password_hash"),
   notes: text("notes"),
   isActive: boolean("is_active").notNull().default(true),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedBy: uuid("deleted_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  deleteReason: text("delete_reason"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -427,6 +432,10 @@ export const subscriptions = pgTable("subscriptions", {
     .defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   autoRenew: boolean("auto_renew").notNull().default(false),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedBy: uuid("deleted_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -867,6 +876,78 @@ export const nmsDevices = pgTable("nms_devices", {
     .notNull()
     .defaultNow(),
 });
+
+// ─── SMS Logs ─────────────────────────────────────────────────────────────────
+
+export const smsLogs = pgTable("sms_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  phone: varchar("phone", { length: 20 }).notNull(),
+  message: text("message").notNull(),
+  provider: varchar("provider", { length: 50 }),
+  messageId: varchar("message_id", { length: 100 }),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  error: text("error"),
+  relatedId: uuid("related_id"),
+  relatedType: varchar("related_type", { length: 50 }),
+  retryCount: smallint("retry_count").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type SmsLog = typeof smsLogs.$inferSelect;
+
+// ─── Wireless APs ─────────────────────────────────────────────────────────────
+
+export const wirelessAps = pgTable("wireless_aps", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  routerId: uuid("router_id").notNull().references(() => routers.id, { onDelete: "cascade" }),
+  interfaceName: varchar("interface_name", { length: 100 }).notNull(),
+  ssid: varchar("ssid", { length: 100 }),
+  macAddress: varchar("mac_address", { length: 17 }),
+  band: varchar("band", { length: 20 }),
+  channel: varchar("channel", { length: 20 }),
+  frequency: integer("frequency"),
+  channelWidth: varchar("channel_width", { length: 20 }),
+  txPower: integer("tx_power"),
+  noiseFloor: integer("noise_floor"),
+  signalStrength: integer("signal_strength"),
+  ccq: integer("ccq"),
+  txRate: bigint("tx_rate", { mode: "number" }),
+  rxRate: bigint("rx_rate", { mode: "number" }),
+  registeredClients: integer("registered_clients").notNull().default(0),
+  cpuLoad: smallint("cpu_load"),
+  freeMemoryMb: integer("free_memory_mb"),
+  totalMemoryMb: integer("total_memory_mb"),
+  temperatureC: real("temperature_c"),
+  uptime: varchar("uptime", { length: 50 }),
+  isOnline: boolean("is_online").notNull().default(false),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const wirelessScans = pgTable("wireless_scans", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  routerId: uuid("router_id").notNull().references(() => routers.id, { onDelete: "cascade" }),
+  interfaceName: varchar("interface_name", { length: 100 }).notNull(),
+  frequency: integer("frequency"),
+  channel: varchar("channel", { length: 20 }),
+  ssid: varchar("ssid", { length: 100 }),
+  bssid: varchar("bssid", { length: 17 }),
+  signalStrength: integer("signal_strength"),
+  band: varchar("band", { length: 20 }),
+  radioCount: integer("radio_count").default(1),
+  scannedAt: timestamp("scanned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type WirelessAp = typeof wirelessAps.$inferSelect;
+export type InsertWirelessAp = typeof wirelessAps.$inferInsert;
+export type WirelessScan = typeof wirelessScans.$inferSelect;
 
 // ─── Relations ────────────────────────────────────────────────────────────────
 

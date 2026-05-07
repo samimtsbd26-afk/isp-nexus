@@ -55,6 +55,7 @@ import HotspotTemplates from "./pages/HotspotTemplates";
 import Users from "./pages/Users";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
+import WirelessControl from "./pages/monitoring/WirelessControl";
 
 function RequireAuth({ children }: Readonly<{ children: React.ReactNode }>) {
   const location = useLocation();
@@ -90,9 +91,11 @@ export default function App() {
           if (/UNAUTHORIZED|401/.test(message)) return false;
           return failureCount < 1;
         },
-        staleTime: 0,
-        gcTime: 5 * 60_000,
-        refetchOnMount: "always",
+        // 30s stale window: cached data shows instantly on tab return,
+        // background refetch happens silently only after 30s.
+        staleTime: 30_000,
+        gcTime: 10 * 60_000,
+        refetchOnMount: true,
         refetchOnWindowFocus: false,
       },
     },
@@ -126,6 +129,7 @@ export default function App() {
             <Route path="monitoring/bandwidth" element={<BandwidthMonitor />} />
             <Route path="monitoring/ping" element={<PingMonitor />} />
             <Route path="monitoring/sfp" element={<SfpMonitor />} />
+            <Route path="monitoring/wireless" element={<WirelessControl />} />
             <Route path="interfaces" element={<Interfaces />} />
             <Route path="neighbors" element={<Neighbors />} />
 

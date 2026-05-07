@@ -32,7 +32,7 @@ import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
 import { verifyAccessToken } from "./auth/session.js";
 import { initBot, stopBot } from "./services/telegram/bot.js";
-import { setMonitoringEmitter, startMonitoringWorker, startAlertsWorker, scheduleJobs } from "./jobs/queue.js";
+import { setMonitoringEmitter, startMonitoringWorker, startAlertsWorker, startExpiryWorker, startSyncWorker, startSecurityWorker, scheduleJobs } from "./jobs/queue.js";
 
 // Safety net: prevent node-routeros !empty crash from killing the whole API process
 process.on("uncaughtException", (err) => {
@@ -298,15 +298,25 @@ io.use(async (socket, next) => {
 
 io.on("connection", (socket) => {
   logger.debug({ id: socket.id }, "Socket connected");
+
+  // Auto-join the org room for admin-wide events (orders, payments, stats)
+  socket.join(`org:${socket.data.orgId}`);
+
   socket.on("join:router", async (routerId: string) => {
     const [router] = await socketDb.select({ id: routers.id }).from(routers)
       .where(and(eq(routers.id, routerId), eq(routers.orgId, socket.data.orgId))).limit(1);
     if (router) socket.join(`router:${router.id}`);
   });
+
   socket.on("disconnect", () => logger.debug({ id: socket.id }, "Socket disconnected"));
 });
 
 export { io };
+
+// Emit org-scoped events to all admins watching that org
+export function emitOrgEvent(orgId: string, event: string, payload: unknown): void {
+  io.to(`org:${orgId}`).emit(event, payload);
+}
 
 setMonitoringEmitter((room, event, payload) => {
   io.to(room).emit(event, payload);
@@ -316,6 +326,9 @@ async function bootstrap() {
   if (env.NODE_ENV === "production") {
     const mWorker = startMonitoringWorker();
     const aWorker = startAlertsWorker();
+    const eWorker = startExpiryWorker();
+    const sWorker = startSyncWorker();
+    const secWorker = startSecurityWorker();
     await scheduleJobs();
     initBot().catch((err) => {
       logger.warn({ err }, "Telegram bot failed to start — check TELEGRAM_BOT_TOKEN in .env");
@@ -324,8 +337,13 @@ async function bootstrap() {
     process.on("SIGTERM", async () => {
       logger.info("Shutting down...");
       await stopBot();
-      await mWorker.close();
-      await aWorker.close();
+      await Promise.allSettled([
+        mWorker.close(),
+        aWorker.close(),
+        eWorker.close(),
+        sWorker.close(),
+        secWorker.close(),
+      ]);
       process.exit(0);
     });
   }

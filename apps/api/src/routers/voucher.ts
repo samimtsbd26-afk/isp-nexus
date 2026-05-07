@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { router, authedProcedure, adminProcedure, publicProcedure } from "../middleware.js";
 import { vouchers } from "@isp-nexus/db";
@@ -12,9 +12,21 @@ function genCode(len = 10): string {
 
 export const voucherRouter = router({
   list: authedProcedure
-    .input(z.object({ status: z.string().optional(), batchName: z.string().optional() }))
+    .input(z.object({
+      status: z.string().optional(),
+      batchName: z.string().optional(),
+      limit: z.number().default(100),
+      offset: z.number().default(0),
+    }))
     .query(async ({ ctx, input }) => {
-      return ctx.db.select().from(vouchers).where(eq(vouchers.orgId, ctx.orgId));
+      const conditions: any[] = [eq(vouchers.orgId, ctx.orgId)];
+      if (input.status) conditions.push(eq(vouchers.status, input.status as any));
+      if (input.batchName) conditions.push(eq(vouchers.batchName, input.batchName));
+      return ctx.db.select().from(vouchers)
+        .where(and(...conditions))
+        .orderBy(desc(vouchers.createdAt))
+        .limit(input.limit)
+        .offset(input.offset);
     }),
 
   createBatch: adminProcedure.input(createVoucherBatchSchema).mutation(async ({ ctx, input }) => {
