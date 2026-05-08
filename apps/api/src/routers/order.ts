@@ -27,6 +27,30 @@ export const orderRouter = router({
       .orderBy(desc(orders.createdAt));
   }),
 
+  trialRequests: adminProcedure
+    .input(z.object({ limit: z.number().default(100) }))
+    .query(async ({ ctx, input }) => {
+      return ctx.db.select({
+        id: orders.id,
+        status: orders.status,
+        mac: orders.paymentFrom,
+        ip: orders.trxId,
+        meta: orders.screenshotUrl,
+        createdAt: orders.createdAt,
+        reviewedAt: orders.reviewedAt,
+        customerName: customers.fullName,
+        customerPhone: customers.phone,
+        packageName: packages.name,
+        packageId: orders.packageId,
+      })
+      .from(orders)
+      .innerJoin(customers, eq(orders.customerId, customers.id))
+      .leftJoin(packages, eq(orders.packageId, packages.id))
+      .where(and(eq(orders.orgId, ctx.orgId), eq(orders.paymentMethod, "free")))
+      .orderBy(desc(orders.createdAt))
+      .limit(input.limit);
+    }),
+
   get: adminProcedure.input(z.object({ id: z.string().uuid() })).query(async ({ ctx, input }) => {
     const [o] = await ctx.db.select().from(orders)
       .where(and(eq(orders.id, input.id), eq(orders.orgId, ctx.orgId))).limit(1);

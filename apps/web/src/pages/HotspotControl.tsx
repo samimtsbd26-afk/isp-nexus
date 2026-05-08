@@ -502,30 +502,118 @@ function ProfilesTab({ routerId, search }: { routerId: string; search: string })
 }
 
 // === TRIAL CONTROL TAB ===
-function TrialTab({ routerId }: { routerId: string }) {
-  const [trialConfig, setTrialConfig] = useState({ durationMinutes: 30, packageId: "" });
+function TrialTab({ routerId: _ }: { routerId: string }) {
+  const { data: trials, refetch, isLoading } = trpc.order.trialRequests.useQuery({ limit: 200 }, { refetchInterval: 30_000 });
+  const approve = trpc.order.approve.useMutation({
+    onSuccess: () => { refetch(); toast.success("ট্রায়াল অনুমোদিত — MikroTik user তৈরি হয়েছে"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const reject = trpc.order.reject.useMutation({
+    onSuccess: () => { refetch(); toast.success("ট্রায়াল বাতিল করা হয়েছে"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const all = trials ?? [];
+  const pending = all.filter((t) => t.status === "pending");
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const approvedToday = all.filter((t) => t.status === "approved" && new Date(t.reviewedAt ?? 0) >= todayStart);
+
+  function parseUA(meta: string | null): string {
+    try { return (JSON.parse(meta ?? "{}") as { ua?: string }).ua ?? ""; } catch { return ""; }
+  }
+  function deviceLabel(ua: string): string {
+    if (!ua) return "—";
+    if (/android/i.test(ua)) return "🤖 Android";
+    if (/iphone|ipad/i.test(ua)) return "🍎 iOS";
+    if (/windows/i.test(ua)) return "🖥️ Windows";
+    if (/mac/i.test(ua)) return "🍎 Mac";
+    return "💻 " + ua.slice(0, 20);
+  }
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <h3 className="font-semibold">Trial Configuration</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Duration (minutes)</label><Input type="number" value={trialConfig.durationMinutes} onChange={(e) => setTrialConfig({ ...trialConfig, durationMinutes: Number(e.target.value) })} /></div>
-            <div><label className="block text-xs font-medium text-muted-foreground mb-1.5">Trial Package</label><Input value={trialConfig.packageId} onChange={(e) => setTrialConfig({ ...trialConfig, packageId: e.target.value })} placeholder="Package ID" /></div>
-          </div>
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => toast.success("Trial settings saved")}>Save Settings</Button>
-            <Button variant="outline" size="sm" onClick={() => toast.success("Refreshed")}><RefreshCw size={14} /> Refresh Status</Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground mb-1">অনুমোদন বাকি</p>
+          <p className="text-2xl font-bold text-yellow-400">{pending.length}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground mb-1">আজকে অনুমোদিত</p>
+          <p className="text-2xl font-bold text-green-400">{approvedToday.length}</p>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <p className="text-xs text-muted-foreground mb-1">মোট রিকোয়েস্ট</p>
+          <p className="text-2xl font-bold">{all.length}</p>
+        </CardContent></Card>
+      </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Trial Available</p><p className="text-2xl font-bold">Yes</p></CardContent></Card>
-          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Active Trials</p><p className="text-2xl font-bold">0</p></CardContent></Card>
-          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Total Today</p><p className="text-2xl font-bold">0</p></CardContent></Card>
-        </div>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-sm">ফ্রি ট্রায়াল রিকোয়েস্ট</h3>
+        <Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw size={14} /></Button>
+      </div>
+
+      <Card><CardContent className="p-0">
+        {isLoading && <div className="py-16 text-center text-muted-foreground text-sm">Loading…</div>}
+        {!isLoading && all.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>স্ট্যাটাস</TableHead>
+                <TableHead>গ্রাহক</TableHead>
+                <TableHead>MAC</TableHead>
+                <TableHead>IP</TableHead>
+                <TableHead>ডিভাইস</TableHead>
+                <TableHead>সময়</TableHead>
+                <TableHead className="w-24"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {all.map((t) => {
+                const ua = parseUA(t.meta);
+                return (
+                  <TableRow key={t.id} className={t.status === "pending" ? "bg-yellow-500/5" : ""}>
+                    <TableCell>
+                      <Badge variant={t.status === "approved" ? "success" : t.status === "rejected" ? "destructive" : "default"}>
+                        {t.status === "approved" ? "✅ অনুমোদিত" : t.status === "rejected" ? "❌ বাতিল" : "⏳ অপেক্ষায়"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium text-sm">{t.customerName}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{t.customerPhone}</div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{t.mac ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{t.ip ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{deviceLabel(ua)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {new Date(t.createdAt).toLocaleString("en-BD")}
+                    </TableCell>
+                    <TableCell>
+                      {t.status === "pending" && (
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline"
+                            className="text-green-400 border-green-400/30 hover:bg-green-400/10 h-7 px-2 text-xs"
+                            disabled={approve.isPending}
+                            onClick={() => approve.mutate({ id: t.id })}>
+                            ✅ অনুমোদন
+                          </Button>
+                          <Button size="sm" variant="outline"
+                            className="text-red-400 border-red-400/30 hover:bg-red-400/10 h-7 px-2 text-xs"
+                            disabled={reject.isPending}
+                            onClick={() => reject.mutate({ id: t.id })}>
+                            ❌
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+        {!isLoading && all.length === 0 && <Empty message="এখনও কোনো ফ্রি ট্রায়াল রিকোয়েস্ট আসেনি" />}
+      </CardContent></Card>
     </div>
   );
 }
