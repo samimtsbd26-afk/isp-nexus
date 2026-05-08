@@ -9,4 +9,4 @@ COPY apps/web/package.json ./apps/web/
 COPY apps/portal/package.json ./apps/portal/
 RUN pnpm install --no-frozen-lockfile
 COPY packages/ ./packages/
-CMD ["sh", "-c", "yes '' | pnpm --filter @isp-nexus/db db:push"]
+CMD ["sh", "-c", "pnpm --filter @isp-nexus/db exec drizzle-kit push --force"]
