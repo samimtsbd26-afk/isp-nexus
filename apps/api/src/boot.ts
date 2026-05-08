@@ -25,13 +25,13 @@ import { trpcServer } from "@hono/trpc-server";
 import { Server as SocketIOServer } from "socket.io";
 import type { IncomingMessage, ServerResponse } from "http";
 import { and, asc, eq } from "drizzle-orm";
-import { createDb, packages, routers, users } from "@isp-nexus/db";
+import { createDb, orders, packages, routers, telegramConfigs, users } from "@isp-nexus/db";
 import { appRouter } from "./router.js";
 import { createContext } from "./context.js";
 import { env } from "./lib/env.js";
 import { logger } from "./lib/logger.js";
 import { verifyAccessToken } from "./auth/session.js";
-import { initBot, stopBot } from "./services/telegram/bot.js";
+import { initBot, stopBot, sendTrialRequestNotification } from "./services/telegram/bot.js";
 import { setMonitoringEmitter, startMonitoringWorker, startAlertsWorker, startExpiryWorker, startSyncWorker, startSecurityWorker, scheduleJobs } from "./jobs/queue.js";
 
 // Safety net: prevent node-routeros !empty crash from killing the whole API process
@@ -169,16 +169,43 @@ app.post("/api/portal/register", async (c) => {
     
     const caller = await portalCaller(c);
     if (body.trial) {
+      const orgId = body.orgId || portalOrg(c);
       const pkg = await findPortalPackage(c, { packageId: body.packageId, trial: true });
-      if (!pkg) return c.json({ error: "No trial package is available" }, 404);
+      if (!pkg) return c.json({ error: "ট্রায়াল প্যাকেজ পাওয়া যায়নি" }, 404);
+      const mac = String(body.mac || body.debug?.mac || "").toLowerCase().replace(/[^0-9a-f:.-]/g, "").slice(0, 17);
+      const ip = String(body.ip || body.debug?.ip || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "").trim().slice(0, 45);
+      const ua = String(body.debug?.userAgent || c.req.header("user-agent") || "").slice(0, 300);
       const data = await caller.portal.trialRegister({
-        orgId: body.orgId || portalOrg(c),
+        orgId,
         packageId: pkg.id,
         fullName: String(body.fullName).trim(),
         phone: String(body.phone).trim(),
         password: String(body.password),
+        macAddress: mac || undefined,
+        ipAddress: ip || undefined,
+        userAgent: ua || undefined,
       });
-      return c.json({ data: { ...data, username: body.phone, password: body.password } });
+      // Telegram notification with inline Approve/Reject buttons
+      const ctx2 = await createContext(c);
+      const [tgConfig] = await ctx2.db.select({ chatId: telegramConfigs.chatId })
+        .from(telegramConfigs).where(eq(telegramConfigs.orgId, orgId)).limit(1);
+      if (tgConfig) {
+        const msgId = await sendTrialRequestNotification(
+          tgConfig.chatId, data.orderId,
+          { fullName: String(body.fullName).trim(), phone: String(body.phone).trim() },
+          pkg, mac, ip, ua,
+        );
+        if (msgId) {
+          await ctx2.db.update(orders).set({ telegramMessageId: msgId }).where(eq(orders.id, data.orderId));
+        }
+      }
+      emitOrgEvent(orgId, "order:new", {
+        orgId, orderId: data.orderId,
+        customerName: String(body.fullName).trim(),
+        customerPhone: String(body.phone).trim(),
+        amountBdt: 0, paymentMethod: "free", trxId: null,
+      });
+      return c.json({ data: { pending: true, orderId: data.orderId, message: "আপনার রিকোয়েস্ট পাঠানো হয়েছে। অ্যাডমিন অনুমোদন দিলে আপনি WiFi ব্যবহার করতে পারবেন।" } });
     }
     const data = await caller.portal.register({
       orgId: body.orgId || portalOrg(c),

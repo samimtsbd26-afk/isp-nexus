@@ -1,8 +1,10 @@
 import { Bot } from "grammy";
-import { and, eq, sql, gte, lte } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { and, eq, sql, gte, lte, ne } from "drizzle-orm";
 import {
   createDb,
   customers,
+  invoices,
   orders,
   packages,
   radcheck,
@@ -16,6 +18,8 @@ import { env } from "../../lib/env.js";
 import { logger } from "../../lib/logger.js";
 import { decryptText, encryptText } from "../../lib/crypto.js";
 import { getMikroTikClient, type MikroTikApi } from "../mikrotik/client.js";
+import { ensureHotspotProfile as ensureHotspotProfilePkg, syncHotspotRadiusUser } from "../hotspot/provisioning.js";
+import { nextInvoiceNumber } from "../billing/invoice.js";
 
 let botInstance: Bot | null = null;
 const db = createDb(env.DATABASE_URL);
@@ -224,6 +228,33 @@ export async function initBot(): Promise<void> {
     }
   });
 
+  botInstance.on("callback_query:data", async (ctx) => {
+    const data = ctx.callbackQuery.data ?? "";
+    const colonIdx = data.indexOf(":");
+    if (colonIdx < 0) return;
+    const action = data.slice(0, colonIdx);
+    const orderId = data.slice(colonIdx + 1);
+    if (action !== "approve_order" && action !== "reject_order") return;
+
+    const telegramId = String(ctx.from?.id ?? "");
+    try {
+      const admin = await requireTelegramAdmin(telegramId);
+      if (action === "approve_order") {
+        await approveOrderFromTelegram(admin, orderId);
+        const prev = ctx.callbackQuery.message?.text ?? "";
+        await ctx.editMessageText(prev + "\n\n✅ *অনুমোদিত হয়েছে*", { parse_mode: "Markdown" }).catch(() => {});
+      } else {
+        await rejectOrderFromTelegram(admin, orderId);
+        const prev = ctx.callbackQuery.message?.text ?? "";
+        await ctx.editMessageText(prev + "\n\n❌ *বাতিল করা হয়েছে*", { parse_mode: "Markdown" }).catch(() => {});
+      }
+      await ctx.answerCallbackQuery();
+    } catch (err) {
+      logger.warn({ err, data }, "Telegram callback error");
+      await ctx.answerCallbackQuery({ text: errorMessage(err), show_alert: true }).catch(() => {});
+    }
+  });
+
   botInstance.catch((err) => logger.error({ err }, "Telegram bot error"));
 
   await botInstance.start({ onStart: () => logger.info("Telegram bot started") });
@@ -266,6 +297,148 @@ export async function sendApprovalNotification(chatId: string, customer: any, pk
   ].join("\n");
   try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.error({ err, chatId }, "Failed to send approval notification"); }
+}
+
+export async function sendTrialRequestNotification(
+  chatId: string,
+  orderId: string,
+  customer: { fullName: string; phone: string },
+  pkg: { name: string; validityDays: number },
+  mac: string,
+  ip: string,
+  ua: string,
+): Promise<string | null> {
+  if (!botInstance) return null;
+  const message = [
+    `🔥 *নতুন ট্রায়াল রিকোয়েস্ট*`,
+    ``,
+    `নাম: ${customer.fullName}`,
+    `ফোন: ${customer.phone}`,
+    `MAC: ${mac || "—"}`,
+    `IP: ${ip || "—"}`,
+    `ডিভাইস: ${ua ? ua.slice(0, 80) : "—"}`,
+    `প্যাকেজ: ${pkg.name} (${pkg.validityDays} দিন)`,
+    `সময়: ${new Date().toLocaleString("en-BD")}`,
+  ].join("\n");
+  try {
+    const result = await botInstance.api.sendMessage(chatId, message, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "✅ অনুমোদন", callback_data: `approve_order:${orderId}` },
+          { text: "❌ বাতিল", callback_data: `reject_order:${orderId}` },
+        ]],
+      },
+    });
+    return String(result.message_id);
+  } catch (err) {
+    logger.error({ err, chatId }, "Failed to send trial request notification");
+    return null;
+  }
+}
+
+async function approveOrderFromTelegram(admin: TelegramAdmin, orderId: string): Promise<void> {
+  const [o] = await db.select().from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.orgId, admin.orgId))).limit(1);
+  if (!o) throw new Error("অর্ডার পাওয়া যায়নি");
+  if (o.status !== "pending") throw new Error(`অর্ডারটি ইতোমধ্যে ${o.status} করা হয়েছে`);
+  if (!o.packageId) throw new Error("প্যাকেজ প্রোফাইল পাওয়া যায়নি");
+
+  const [pkg] = await db.select().from(packages)
+    .where(and(eq(packages.id, o.packageId), eq(packages.orgId, admin.orgId), eq(packages.isActive, true))).limit(1);
+  if (!pkg) throw new Error("প্যাকেজ প্রোফাইল পাওয়া যায়নি");
+
+  const [customer] = await db.select().from(customers)
+    .where(and(eq(customers.id, o.customerId), eq(customers.orgId, admin.orgId))).limit(1);
+  if (!customer?.isActive) throw new Error("Customer is inactive");
+
+  const validityDays = pkg.validityDays ?? 30;
+  const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
+
+  // Restore registration password from order metadata (free trial)
+  let subPassword: string;
+  let passwordEncrypted: string;
+  if (o.paymentMethod === "free" && o.screenshotUrl) {
+    try {
+      const meta = JSON.parse(o.screenshotUrl) as { ep?: string };
+      if (typeof meta.ep === "string" && meta.ep.split(":").length === 3) {
+        passwordEncrypted = meta.ep;
+        subPassword = decryptText(meta.ep);
+      } else { throw new Error("invalid ep"); }
+    } catch {
+      subPassword = randomBytes(9).toString("base64url");
+      passwordEncrypted = encryptText(subPassword);
+    }
+  } else {
+    subPassword = randomBytes(9).toString("base64url");
+    passwordEncrypted = encryptText(subPassword);
+  }
+
+  const username = customer.phone;
+  const [r] = await db.select().from(routers)
+    .where(and(eq(routers.orgId, admin.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
+
+  if (pkg.type !== "static" && r) {
+    const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
+    let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+    try {
+      const routerPassword = decryptText(r.passwordEncrypted);
+      client = await getMikroTikClient({ host: r.host, port, username: r.username, password: routerPassword, useSsl: r.useSsl });
+      if (pkg.type === "pppoe") {
+        await client.add("/ppp/secret", {
+          name: username, password: subPassword,
+          service: "pppoe", profile: pkg.mikrotikProfileName ?? "default",
+        });
+      } else {
+        const profile = pkg.mikrotikProfileName ?? "default";
+        await ensureHotspotProfilePkg(client, profile, pkg);
+        await client.add("/ip/hotspot/user", {
+          name: username,
+          password: subPassword,
+          profile,
+          "limit-uptime": `${validityDays * 24}h`,
+          comment: o.paymentMethod === "free" ? `trial:${o.id}` : o.id,
+        });
+        await syncHotspotRadiusUser(db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
+      }
+    } catch (err) {
+      logger.error({ err }, "MikroTik provision error in Telegram order approval");
+      throw new Error("রাউটার প্রভিশনিং ব্যর্থ হয়েছে — MikroTik কানেকশন চেক করুন");
+    } finally {
+      await client?.close().catch(() => {});
+    }
+  }
+
+  const [sub] = await db.insert(subscriptions).values({
+    orgId: admin.orgId, customerId: customer.id, packageId: pkg.id,
+    routerId: r?.id ?? null, username, passwordEncrypted,
+    expiresAt, status: "active",
+  }).returning();
+
+  await db.update(orders).set({
+    status: "approved", subscriptionId: sub.id,
+    reviewedBy: admin.id, reviewedAt: new Date(), updatedAt: new Date(),
+  }).where(eq(orders.id, o.id));
+
+  const invoiceNum = await nextInvoiceNumber(db, admin.orgId);
+  await db.insert(invoices).values({
+    orgId: admin.orgId, orderId: o.id, invoiceNumber: invoiceNum,
+    customerId: o.customerId, amountBdt: o.amountBdt,
+    taxBdt: 0, totalBdt: o.amountBdt, paidAt: new Date(),
+  });
+
+  logger.info({ orderId: o.id, adminId: admin.id }, "Order approved via Telegram");
+}
+
+async function rejectOrderFromTelegram(admin: TelegramAdmin, orderId: string): Promise<void> {
+  const [o] = await db.select({ id: orders.id, status: orders.status }).from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.orgId, admin.orgId))).limit(1);
+  if (!o) throw new Error("অর্ডার পাওয়া যায়নি");
+  if (o.status !== "pending") throw new Error(`অর্ডারটি ইতোমধ্যে ${o.status} করা হয়েছে`);
+  await db.update(orders).set({
+    status: "rejected", reviewedBy: admin.id, reviewedAt: new Date(), updatedAt: new Date(),
+  }).where(eq(orders.id, o.id));
+  logger.info({ orderId: o.id, adminId: admin.id }, "Order rejected via Telegram");
 }
 
 export async function sendExpiryAlert(chatId: string, customerName: string, packageName: string, daysLeft: number, portalUrl?: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, ne } from "drizzle-orm";
 import { router, publicProcedure } from "../middleware.js";
 import { customers, packages, orders, subscriptions, invoices, supportTickets, routers, telegramConfigs, hotspotUsers, pppoeUsers } from "@isp-nexus/db";
 import { hashPassword, verifyPassword, encryptText, decryptText } from "../lib/crypto.js";
@@ -314,15 +314,62 @@ export const portalRouter = router({
     }),
 
   trialRegister: publicProcedure
-    .input(trialRegisterSchema)
+    .input(trialRegisterSchema.extend({
+      macAddress: z.string().max(30).optional(),
+      ipAddress: z.string().max(45).optional(),
+      userAgent: z.string().max(512).optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
+      const [pkg] = await ctx.db.select().from(packages)
+        .where(and(eq(packages.id, input.packageId), eq(packages.orgId, input.orgId), eq(packages.isActive, true))).limit(1);
+      if (!pkg) throw new TRPCError({ code: "NOT_FOUND", message: "ট্রায়াল প্যাকেজ পাওয়া যায়নি" });
+      if (!pkg.isTrial) throw new TRPCError({ code: "BAD_REQUEST", message: "এই প্যাকেজ ট্রায়াল হিসেবে পাওয়া যাচ্ছে না" });
+
+      const cleanMac = input.macAddress
+        ? input.macAddress.toLowerCase().replace(/[^0-9a-f:.-]/g, "").slice(0, 17)
+        : null;
+
+      // Anti-duplicate: subscription already exists for this phone
+      const [existingSub] = await ctx.db.select({ id: subscriptions.id }).from(subscriptions)
+        .where(and(eq(subscriptions.orgId, input.orgId), eq(subscriptions.username, input.phone))).limit(1);
+      if (existingSub) {
+        throw new TRPCError({ code: "CONFLICT", message: "এই ডিভাইস বা ফোন নম্বরে আগে ফ্রি ট্রায়াল নেওয়া হয়েছে" });
+      }
+
+      // Anti-duplicate: pending or approved free trial order for this phone
+      const [existingOrderByPhone] = await ctx.db
+        .select({ id: orders.id })
+        .from(orders)
+        .innerJoin(customers, eq(orders.customerId, customers.id))
+        .where(and(
+          eq(orders.orgId, input.orgId),
+          eq(customers.phone, input.phone),
+          eq(orders.paymentMethod, "free"),
+          ne(orders.status, "rejected"),
+        )).limit(1);
+      if (existingOrderByPhone) {
+        throw new TRPCError({ code: "CONFLICT", message: "এই ডিভাইস বা ফোন নম্বরে আগে ফ্রি ট্রায়াল নেওয়া হয়েছে" });
+      }
+
+      // Anti-duplicate: pending or approved free trial order for this MAC address
+      if (cleanMac && cleanMac.length >= 11) {
+        const [existingByMac] = await ctx.db.select({ id: orders.id }).from(orders)
+          .where(and(
+            eq(orders.orgId, input.orgId),
+            eq(orders.paymentFrom, cleanMac),
+            eq(orders.paymentMethod, "free"),
+            ne(orders.status, "rejected"),
+          )).limit(1);
+        if (existingByMac) {
+          throw new TRPCError({ code: "CONFLICT", message: "এই ডিভাইস বা ফোন নম্বরে আগে ফ্রি ট্রায়াল নেওয়া হয়েছে" });
+        }
+      }
+
+      // Create or find customer
       let [customer] = await ctx.db.select().from(customers)
         .where(and(eq(customers.phone, input.phone), eq(customers.orgId, input.orgId))).limit(1);
       if (customer) {
         if (!customer.isActive) throw new TRPCError({ code: "UNAUTHORIZED", message: "Account is inactive" });
-        if (customer.passwordHash && !(await verifyPassword(input.password, customer.passwordHash))) {
-          throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid credentials" });
-        }
       } else {
         const code = await nextCustomerCode(ctx.db, input.orgId);
         const passwordHash = await hashPassword(input.password);
@@ -332,57 +379,23 @@ export const portalRouter = router({
         }).returning();
       }
 
-      const [pkg] = await ctx.db.select().from(packages)
-        .where(and(eq(packages.id, input.packageId), eq(packages.orgId, input.orgId), eq(packages.isActive, true))).limit(1);
-      if (!pkg) throw new TRPCError({ code: "NOT_FOUND", message: "Package not found" });
-      if (!pkg.isTrial) throw new TRPCError({ code: "BAD_REQUEST", message: "Package is not available as a trial" });
-      await assertNoExistingHotspotUser(ctx, input);
+      // Encrypt registration password — stored in order for MikroTik provisioning on approval
+      const ep = encryptText(input.password);
+      const meta = JSON.stringify({ ep, ip: input.ipAddress ?? "", ua: (input.userAgent ?? "").slice(0, 300) });
 
-      const [r] = await ctx.db.select().from(routers)
-        .where(and(eq(routers.orgId, input.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
-      const passwordEncrypted = encryptText(input.password);
-      const validityDays = pkg.validityDays ?? 7;
-      const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
-      const [sub] = await ctx.db.insert(subscriptions).values({
-        orgId: input.orgId, customerId: customer.id, packageId: input.packageId,
-        routerId: r?.id ?? null, username: input.phone, passwordEncrypted,
-        expiresAt, status: "active",
-      }).returning();
+      // Create PENDING ORDER — no subscription, no MikroTik user, no internet access yet
+      const [order] = await ctx.db.insert(orders).values({
+        orgId: input.orgId,
+        customerId: customer.id,
+        packageId: pkg.id,
+        amountBdt: 0,
+        paymentMethod: "free",
+        paymentFrom: cleanMac ?? undefined,
+        screenshotUrl: meta,
+        status: "pending",
+      }).returning({ id: orders.id });
 
-      if (r) {
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
-        try {
-          const routerPassword = decryptText(r.passwordEncrypted);
-          client = await getMikroTikClient({ host: r.host, port, username: r.username, password: routerPassword, useSsl: r.useSsl });
-          if (pkg.type === "pppoe") {
-            const addData: Record<string, string> = {
-              name: input.phone, password: input.password,
-              service: "pppoe", profile: pkg.mikrotikProfileName ?? "default",
-            };
-            await client.add("/ppp/secret", addData);
-          } else {
-            const profile = pkg.mikrotikProfileName ?? "default";
-            await ensureHotspotProfile(client, profile, pkg);
-            await client.add("/ip/hotspot/user", {
-              name: input.phone,
-              password: input.password,
-              profile,
-              "limit-uptime": `${validityDays * 24}h`,
-              comment: sub.id,
-            });
-            await syncHotspotRadiusUser(ctx.db, input.phone, input.password, pkg, validityDays * 24 * 60 * 60);
-          }
-        } catch (err) {
-          logger.error({ err }, "MikroTik provision error in trialRegister");
-        } finally {
-          await client?.close().catch(() => {});
-        }
-      }
-
-      const token = await signPortalToken({ customerId: customer.id, orgId: input.orgId, type: "portal" });
-      const { passwordHash: _, ...safe } = customer;
-      return { token, customer: safe };
+      return { orderId: order.id, customerId: customer.id, pending: true };
     }),
 
   macCheck: publicProcedure

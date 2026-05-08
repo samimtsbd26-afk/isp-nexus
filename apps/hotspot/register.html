@@ -157,6 +157,8 @@
                 email: email || undefined,
                 password: password,
                 trial: isTrial,
+                mac: mac,
+                ip: ip,
                 orgId: qs.get("orgId") || qs.get("org") || "",
                 debug: debugInfo
             };
@@ -169,6 +171,33 @@
                 body: JSON.stringify(requestBody)
             }).then(function (result) {
                 console.log("[Skynity Register] Success:", result);
+                if (result.pending) {
+                    var frm = document.getElementById("registerForm");
+                    if (frm) frm.style.display = "none";
+                    var box = document.querySelector(".auth-box");
+                    if (box) {
+                        var div = document.createElement("div");
+                        div.style.cssText = "text-align:center;padding:24px 0";
+                        div.innerHTML =
+                            '<div style="font-size:2.5rem;margin-bottom:12px">⏳</div>' +
+                            '<h3 style="color:#00f3ff;margin-bottom:10px">' +
+                            (isBangla() ? 'রিকোয়েস্ট পাঠানো হয়েছে' : 'Request Submitted') +
+                            '</h3>' +
+                            '<p style="color:#94a3b8;font-size:0.9rem;margin-bottom:20px;line-height:1.5">' +
+                            (isBangla()
+                                ? 'অ্যাডমিন অনুমোদন দিলে আপনি WiFi ব্যবহার করতে পারবেন।'
+                                : 'You can use WiFi once the admin approves your request.') +
+                            '</p>' +
+                            '<a href="login.html" class="auth-btn" style="display:inline-block;text-decoration:none;margin-bottom:10px">' +
+                            (isBangla() ? 'লগইন পেজে যান' : 'Go to Login') +
+                            '</a><br>' +
+                            '<a href="payment.html" style="display:inline-block;margin-top:10px;color:#00f3ff;font-size:0.85rem">' +
+                            (isBangla() ? 'পেইড প্যাকেজ কিনতে পারেন' : 'Or buy a paid package') +
+                            '</a>';
+                        box.appendChild(div);
+                    }
+                    return;
+                }
                 var username = result.username || result.phone || phone;
                 var pass = result.password || password;
                 localStorage.setItem("skynity_username", username);

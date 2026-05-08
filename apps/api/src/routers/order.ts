@@ -60,8 +60,24 @@ export const orderRouter = router({
 
         const validityDays = pkg.validityDays ?? 30;
         const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
-        const subPassword = randomBytes(9).toString("base64url");
-        const passwordEncrypted = encryptText(subPassword);
+        // For free trial orders, reuse the registration password stored in order metadata
+        let subPassword: string;
+        let passwordEncrypted: string;
+        if (o.paymentMethod === "free" && o.screenshotUrl) {
+          try {
+            const meta = JSON.parse(o.screenshotUrl) as { ep?: string };
+            if (typeof meta.ep === "string" && meta.ep.split(":").length === 3) {
+              passwordEncrypted = meta.ep;
+              subPassword = decryptText(meta.ep);
+            } else { throw new Error("invalid ep"); }
+          } catch {
+            subPassword = randomBytes(9).toString("base64url");
+            passwordEncrypted = encryptText(subPassword);
+          }
+        } else {
+          subPassword = randomBytes(9).toString("base64url");
+          passwordEncrypted = encryptText(subPassword);
+        }
         const username = customer.phone;
 
         if (pkg.type !== "static") {
@@ -87,7 +103,7 @@ export const orderRouter = router({
                 password: subPassword,
                 profile,
                 "limit-uptime": `${validityDays * 24}h`,
-                comment: o.id,
+                comment: o.paymentMethod === "free" ? `trial:${o.id}` : o.id,
               });
               await syncHotspotRadiusUser(ctx.db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
             }
