@@ -203,18 +203,20 @@ export const portalRouter = router({
         const [r] = await ctx.db.select().from(routers)
           .where(and(eq(routers.orgId, input.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
         const passwordEncrypted = encryptText(input.password);
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const validityDays = pkg.validityDays ?? 7;
+        const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
         const [sub] = await ctx.db.insert(subscriptions).values({
           orgId: input.orgId, customerId: customer.id, packageId: input.packageId,
           routerId: r?.id ?? null, username: input.phone, passwordEncrypted,
           expiresAt, status: "active",
         }).returning();
 
-        if (r && pkg) {
+        if (r) {
           const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-          const password = decryptText(r.passwordEncrypted);
+          let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
           try {
-            const client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+            const routerPassword = decryptText(r.passwordEncrypted);
+            client = await getMikroTikClient({ host: r.host, port, username: r.username, password: routerPassword, useSsl: r.useSsl });
             if (pkg.type === "pppoe") {
               const addData: Record<string, string> = {
                 name: input.phone, password: input.password,
@@ -225,13 +227,19 @@ export const portalRouter = router({
               const profile = pkg.mikrotikProfileName ?? "default";
               await ensureHotspotProfile(client, profile, pkg);
               await client.add("/ip/hotspot/user", {
-                name: input.phone, password: input.password,
+                name: input.phone,
+                password: input.password,
                 profile,
+                "limit-uptime": `${validityDays * 24}h`,
+                comment: sub.id,
               });
-              await syncHotspotRadiusUser(ctx.db, input.phone, input.password, pkg, 7 * 24 * 60 * 60);
+              await syncHotspotRadiusUser(ctx.db, input.phone, input.password, pkg, validityDays * 24 * 60 * 60);
             }
-            await client.close();
-          } catch (err) { logger.error({ err }, "MikroTik provision error in guestOrder trial"); }
+          } catch (err) {
+            logger.error({ err }, "MikroTik provision error in guestOrder trial");
+          } finally {
+            await client?.close().catch(() => {});
+          }
         }
 
         const token = await signPortalToken({ customerId: customer.id, orgId: input.orgId, type: "portal" });
@@ -283,7 +291,7 @@ export const portalRouter = router({
       const [pkg] = await ctx.db.select().from(packages)
         .where(and(eq(packages.id, order.packageId), eq(packages.orgId, order.orgId)))
         .limit(1);
-      const credentials = order.status === "approved" && order.subscriptionId
+      const rawCreds = order.status === "approved" && order.subscriptionId
         ? await ctx.db.select({
           username: subscriptions.username,
           passwordEncrypted: subscriptions.passwordEncrypted,
@@ -291,16 +299,17 @@ export const portalRouter = router({
           .where(and(eq(subscriptions.id, order.subscriptionId), eq(subscriptions.orgId, order.orgId)))
           .limit(1)
         : [];
+      let resolvedPassword: string | null = null;
+      if (rawCreds[0]) {
+        try { resolvedPassword = decryptText(rawCreds[0].passwordEncrypted); } catch { /* malformed stored password */ }
+      }
       return {
         status: order.status,
         amountBdt: order.amountBdt,
         paymentMethod: order.paymentMethod,
         createdAt: order.createdAt,
         packageName: pkg?.name ?? null,
-        credentials: credentials[0] ? {
-          username: credentials[0].username,
-          password: decryptText(credentials[0].passwordEncrypted),
-        } : null,
+        credentials: rawCreds[0] ? { username: rawCreds[0].username, password: resolvedPassword } : null,
       };
     }),
 
@@ -332,18 +341,20 @@ export const portalRouter = router({
       const [r] = await ctx.db.select().from(routers)
         .where(and(eq(routers.orgId, input.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
       const passwordEncrypted = encryptText(input.password);
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      const validityDays = pkg.validityDays ?? 7;
+      const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
       const [sub] = await ctx.db.insert(subscriptions).values({
         orgId: input.orgId, customerId: customer.id, packageId: input.packageId,
         routerId: r?.id ?? null, username: input.phone, passwordEncrypted,
         expiresAt, status: "active",
       }).returning();
 
-      if (r && pkg) {
+      if (r) {
         const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        const password = decryptText(r.passwordEncrypted);
+        let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
         try {
-          const client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+          const routerPassword = decryptText(r.passwordEncrypted);
+          client = await getMikroTikClient({ host: r.host, port, username: r.username, password: routerPassword, useSsl: r.useSsl });
           if (pkg.type === "pppoe") {
             const addData: Record<string, string> = {
               name: input.phone, password: input.password,
@@ -354,13 +365,19 @@ export const portalRouter = router({
             const profile = pkg.mikrotikProfileName ?? "default";
             await ensureHotspotProfile(client, profile, pkg);
             await client.add("/ip/hotspot/user", {
-              name: input.phone, password: input.password,
+              name: input.phone,
+              password: input.password,
               profile,
+              "limit-uptime": `${validityDays * 24}h`,
+              comment: sub.id,
             });
-            await syncHotspotRadiusUser(ctx.db, input.phone, input.password, pkg, 7 * 24 * 60 * 60);
+            await syncHotspotRadiusUser(ctx.db, input.phone, input.password, pkg, validityDays * 24 * 60 * 60);
           }
-          await client.close();
-        } catch (err) { logger.error({ err }, "MikroTik provision error in trialRegister"); }
+        } catch (err) {
+          logger.error({ err }, "MikroTik provision error in trialRegister");
+        } finally {
+          await client?.close().catch(() => {});
+        }
       }
 
       const token = await signPortalToken({ customerId: customer.id, orgId: input.orgId, type: "portal" });

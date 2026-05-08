@@ -41,69 +41,71 @@ export const orderRouter = router({
         .where(and(eq(orders.id, input.id), eq(orders.orgId, ctx.orgId))).limit(1);
       if (!o) throw new TRPCError({ code: "NOT_FOUND" });
       if (o.status !== "pending") throw new TRPCError({ code: "BAD_REQUEST", message: "Order already processed" });
-      if (!o.packageId) throw new TRPCError({ code: "BAD_REQUEST", message: "Order package is missing" });
+      if (!o.packageId) throw new TRPCError({ code: "BAD_REQUEST", message: "প্যাকেজ প্রোফাইল পাওয়া যায়নি" });
       const packageId = o.packageId;
-      const [orderPkg] = await ctx.db.select().from(packages)
+      const [pkg] = await ctx.db.select().from(packages)
         .where(and(eq(packages.id, packageId), eq(packages.orgId, ctx.orgId), eq(packages.isActive, true))).limit(1);
-      if (!orderPkg) throw new TRPCError({ code: "NOT_FOUND", message: "Package not found" });
-      if (o.amountBdt !== orderPkg.priceBdt) {
+      if (!pkg) throw new TRPCError({ code: "NOT_FOUND", message: "প্যাকেজ প্রোফাইল পাওয়া যায়নি" });
+      if (o.amountBdt !== pkg.priceBdt) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Order amount does not match package price" });
       }
 
       if (!o.subscriptionId) {
         const [customer] = await ctx.db.select().from(customers)
           .where(and(eq(customers.id, o.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
-        const [pkg] = await ctx.db.select().from(packages)
-          .where(and(eq(packages.id, packageId), eq(packages.orgId, ctx.orgId), eq(packages.isActive, true))).limit(1);
         const [r] = await ctx.db.select().from(routers)
           .where(and(eq(routers.orgId, ctx.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
 
         if (!customer?.isActive) throw new TRPCError({ code: "BAD_REQUEST", message: "Customer is inactive" });
 
-        if (pkg) {
-          const validityDays = pkg.validityDays ?? 30;
-          const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
-          const subPassword = randomBytes(9).toString("base64url");
-          const passwordEncrypted = encryptText(subPassword);
-          const username = customer.phone;
+        const validityDays = pkg.validityDays ?? 30;
+        const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
+        const subPassword = randomBytes(9).toString("base64url");
+        const passwordEncrypted = encryptText(subPassword);
+        const username = customer.phone;
 
-          if (pkg.type !== "static") {
-            if (!r) throw new TRPCError({ code: "BAD_REQUEST", message: "Active default router not found" });
-            const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-            const password = decryptText(r.passwordEncrypted);
-            let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
-            try {
-              client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
-              if (pkg.type === "pppoe") {
-                await client.add("/ppp/secret", {
-                  name: username, password: subPassword,
-                  service: "pppoe", profile: pkg.mikrotikProfileName ?? "default",
-                });
-              } else {
-                const profile = pkg.mikrotikProfileName ?? "default";
-                await ensureHotspotProfile(client, profile, pkg);
-                await client.add("/ip/hotspot/user", {
-                  name: username, password: subPassword,
-                  profile,
-                });
-                await syncHotspotRadiusUser(ctx.db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
-              }
-            } catch (err) {
-              logger.error({ err }, "MikroTik provision error in order approval");
-              throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Router provisioning failed" });
-            } finally {
-              await client?.close().catch((err) => logger.warn({ err }, "MikroTik client close failed in order approval"));
-            }
+        if (pkg.type !== "static") {
+          if (!r) throw new TRPCError({ code: "BAD_REQUEST", message: "Active default router not found" });
+          if (pkg.type === "hotspot" && !pkg.mikrotikProfileName) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Router profile sync নেই" });
           }
-
-          const [sub] = await ctx.db.insert(subscriptions).values({
-            orgId: ctx.orgId, customerId: customer.id, packageId: pkg.id,
-            routerId: r?.id ?? null, username, passwordEncrypted,
-            expiresAt, status: "active",
-          }).returning();
-
-          await ctx.db.update(orders).set({ subscriptionId: sub.id, updatedAt: new Date() }).where(eq(orders.id, o.id));
+          const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
+          const password = decryptText(r.passwordEncrypted);
+          let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+          try {
+            client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+            if (pkg.type === "pppoe") {
+              await client.add("/ppp/secret", {
+                name: username, password: subPassword,
+                service: "pppoe", profile: pkg.mikrotikProfileName ?? "default",
+              });
+            } else {
+              const profile = pkg.mikrotikProfileName!;
+              await ensureHotspotProfile(client, profile, pkg);
+              await client.add("/ip/hotspot/user", {
+                name: username,
+                password: subPassword,
+                profile,
+                "limit-uptime": `${validityDays * 24}h`,
+                comment: o.id,
+              });
+              await syncHotspotRadiusUser(ctx.db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
+            }
+          } catch (err) {
+            logger.error({ err }, "MikroTik provision error in order approval");
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Router provisioning failed" });
+          } finally {
+            await client?.close().catch((err) => logger.warn({ err }, "MikroTik client close failed in order approval"));
+          }
         }
+
+        const [sub] = await ctx.db.insert(subscriptions).values({
+          orgId: ctx.orgId, customerId: customer.id, packageId: pkg.id,
+          routerId: r?.id ?? null, username, passwordEncrypted,
+          expiresAt, status: "active",
+        }).returning();
+
+        await ctx.db.update(orders).set({ subscriptionId: sub.id, updatedAt: new Date() }).where(eq(orders.id, o.id));
       } else {
         const [subscription] = await ctx.db.select({ id: subscriptions.id }).from(subscriptions)
           .where(and(eq(subscriptions.id, o.subscriptionId), eq(subscriptions.orgId, ctx.orgId))).limit(1);
@@ -126,24 +128,20 @@ export const orderRouter = router({
 
       const [customer] = await ctx.db.select().from(customers)
         .where(and(eq(customers.id, o.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
-      const [pkg] = await ctx.db.select().from(packages)
-        .where(and(eq(packages.id, packageId), eq(packages.orgId, ctx.orgId))).limit(1);
       const [tgConfig] = await ctx.db.select().from(telegramConfigs)
         .where(eq(telegramConfigs.orgId, ctx.orgId)).limit(1);
-      if (tgConfig && customer && pkg) {
+      if (tgConfig && customer) {
         await sendApprovalNotification(tgConfig.chatId, customer, pkg);
       }
 
-      // Emit WebSocket event to all admins watching this org
       emitOrgEvent(ctx.orgId, "order:approved", {
         orgId: ctx.orgId,
         orderId: o.id,
         customerName: customer?.fullName ?? "Unknown",
         amountBdt: o.amountBdt,
-        packageName: pkg?.name ?? "Unknown",
+        packageName: pkg.name,
       });
 
-      // Emit updated stats for real-time counter refresh
       const [pendingCount] = await ctx.db.select({ n: sql<number>`count(*)` }).from(orders)
         .where(and(eq(orders.orgId, ctx.orgId), eq(orders.status, "pending")));
       emitOrgEvent(ctx.orgId, "order:stats", {
@@ -153,7 +151,6 @@ export const orderRouter = router({
         totalActiveSubscriptions: 0,
       });
 
-      // Non-blocking SMS to customer
       sendPaymentSuccessSms(ctx.orgId, o.id).catch((err) =>
         logger.warn({ err, orderId: o.id }, "SMS send failed — non-blocking"),
       );

@@ -457,8 +457,9 @@ async function ensureHotspotProfile(client: MikroTikApi, name: string, speed: st
 
 async function upsertHotspotUser(client: MikroTikApi, username: string, password: string, profile: string, expiresAt: Date, disabled: boolean) {
   const comment = `isp-nexus telegram expiry=${expiresAt.toISOString()}`;
+  const uptimeHours = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 3_600_000));
   const [user] = await client.print("/ip/hotspot/user", { name: username });
-  const data = { name: username, password, profile, disabled: disabled ? "yes" : "no", comment };
+  const data = { name: username, password, profile, "limit-uptime": `${uptimeHours}h`, disabled: disabled ? "yes" : "no", comment };
   if (user?.[".id"]) {
     await client.exec("/ip/hotspot/user", "set", { numbers: user[".id"], ...data });
     return;

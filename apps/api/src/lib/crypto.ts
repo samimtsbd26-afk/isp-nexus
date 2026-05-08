@@ -16,10 +16,16 @@ export function encryptText(plaintext: string): string {
 }
 
 export function decryptText(ciphertext: string): string {
-  const [ivHex, tagHex, dataHex] = ciphertext.split(":");
-  const iv = Buffer.from(ivHex, "hex");
-  const tag = Buffer.from(tagHex, "hex");
-  const data = Buffer.from(dataHex, "hex");
+  if (typeof ciphertext !== "string" || !ciphertext) {
+    throw new Error("এনক্রিপ্টেড ভ্যালু পাওয়া যায়নি — রাউটার পাসওয়ার্ড পুনরায় সেট করুন");
+  }
+  const parts = ciphertext.split(":");
+  if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
+    throw new Error("এনক্রিপ্টেড ভ্যালু ফরম্যাট সঠিক নয় — রাউটার পাসওয়ার্ড পুনরায় সেট করুন");
+  }
+  const iv = Buffer.from(parts[0], "hex");
+  const tag = Buffer.from(parts[1], "hex");
+  const data = Buffer.from(parts[2], "hex");
   const decipher = createDecipheriv(ALGORITHM, KEY, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");

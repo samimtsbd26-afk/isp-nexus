@@ -141,6 +141,32 @@ app.post("/api/portal/register", async (c) => {
   if (limited) return limited;
   try {
     const body = await c.req.json();
+    
+    // Debug logging for troubleshooting
+    logger.info({ 
+      path: c.req.path, 
+      method: c.req.method,
+      hasOrgId: !!body.orgId,
+      hasFullName: !!body.fullName,
+      hasPhone: !!body.phone,
+      hasPassword: !!body.password,
+      isTrial: !!body.trial,
+      mac: body.debug?.mac || body.mac || "",
+      ip: body.debug?.ip || body.ip || "",
+      userAgent: body.debug?.userAgent || c.req.header("user-agent") || "",
+    }, "Portal register request");
+    
+    // Validation
+    if (!body.fullName || String(body.fullName).trim().length < 2) {
+      return c.json({ error: "Name must be at least 2 characters" }, 400);
+    }
+    if (!body.phone || String(body.phone).trim().length < 10) {
+      return c.json({ error: "Phone number is invalid" }, 400);
+    }
+    if (!body.password || String(body.password).length < 6) {
+      return c.json({ error: "Password must be at least 6 characters" }, 400);
+    }
+    
     const caller = await portalCaller(c);
     if (body.trial) {
       const pkg = await findPortalPackage(c, { packageId: body.packageId, trial: true });
@@ -148,22 +174,23 @@ app.post("/api/portal/register", async (c) => {
       const data = await caller.portal.trialRegister({
         orgId: body.orgId || portalOrg(c),
         packageId: pkg.id,
-        fullName: body.fullName,
-        phone: body.phone,
-        password: body.password,
+        fullName: String(body.fullName).trim(),
+        phone: String(body.phone).trim(),
+        password: String(body.password),
       });
       return c.json({ data: { ...data, username: body.phone, password: body.password } });
     }
     const data = await caller.portal.register({
       orgId: body.orgId || portalOrg(c),
-      username: body.phone,
-      fullName: body.fullName,
-      phone: body.phone,
+      username: String(body.phone).trim(),
+      fullName: String(body.fullName).trim(),
+      phone: String(body.phone).trim(),
       email: body.email || undefined,
-      password: body.password,
+      password: String(body.password),
     });
     return c.json({ data: { ...data, username: body.phone, password: body.password } });
   } catch (error) {
+    logger.error({ err: error }, "Portal register error");
     return portalError(c, error);
   }
 });
@@ -173,18 +200,30 @@ app.post("/api/portal/payment", async (c) => {
   if (limited) return limited;
   try {
     const body = await c.req.json();
+    if (!body.fullName || String(body.fullName).trim().length < 2) {
+      return c.json({ error: "পুরো নাম প্রদান করুন (কমপক্ষে ২ অক্ষর)" }, 400);
+    }
+    if (!body.phone || String(body.phone).trim().length < 10) {
+      return c.json({ error: "সঠিক ফোন নম্বর প্রদান করুন" }, 400);
+    }
+    if (!body.password || String(body.password).length < 6) {
+      return c.json({ error: "পাসওয়ার্ড কমপক্ষে ৬ অক্ষর হতে হবে" }, 400);
+    }
+    if (!body.paymentMethod) {
+      return c.json({ error: "পেমেন্ট মেথড নির্বাচন করুন" }, 400);
+    }
     const pkg = await findPortalPackage(c, { packageId: body.packageId, packageCode: body.packageCode });
-    if (!pkg) return c.json({ error: "Package not found" }, 404);
+    if (!pkg) return c.json({ error: "প্যাকেজ পাওয়া যায়নি" }, 404);
     const caller = await portalCaller(c);
     const data = await caller.portal.guestOrder({
       orgId: body.orgId || portalOrg(c),
       packageId: pkg.id,
-      fullName: body.fullName,
-      phone: body.phone,
-      password: body.password,
+      fullName: String(body.fullName).trim(),
+      phone: String(body.phone).trim(),
+      password: String(body.password),
       paymentMethod: body.paymentMethod,
-      trxId: body.trxId,
-      paymentFrom: body.paymentFrom,
+      trxId: body.trxId || undefined,
+      paymentFrom: body.paymentFrom || undefined,
       isTrial: false,
     });
     return c.json({ data: { ...data, username: body.phone, password: body.password } });
