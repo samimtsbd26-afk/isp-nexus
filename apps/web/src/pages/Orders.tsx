@@ -12,9 +12,27 @@ function StatusBadge({ status }: Readonly<{ status: string }>) {
   return <Badge variant={map[status] ?? "default"}>{status}</Badge>;
 }
 
+function OrderSkeleton() {
+  return (
+    <div className="space-y-2 p-4">
+      {[1, 2, 3].map((i) => (
+        <div key={i} className="flex gap-3 items-center">
+          <div className="h-6 w-16 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-24 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-20 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-16 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-28 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-20 bg-muted rounded animate-pulse" />
+          <div className="h-6 w-16 bg-muted rounded animate-pulse" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Orders() {
-  const { data: pending, refetch: refetchPending } = trpc.order.listPending.useQuery();
-  const { data: all, refetch: refetchAll } = trpc.order.list.useQuery({ limit: 50 });
+  const { data: pending, refetch: refetchPending, isLoading: pendingLoading, error: pendingError } = trpc.order.listPending.useQuery();
+  const { data: all, refetch: refetchAll, isLoading: allLoading, error: allError } = trpc.order.list.useQuery({ limit: 50 });
   const [tab, setTab] = useState<"pending" | "all">("pending");
   const [noteId, setNoteId] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -46,6 +64,8 @@ export default function Orders() {
   });
 
   const orders = tab === "pending" ? (pending ?? []) : (all ?? []);
+  const isLoading = tab === "pending" ? pendingLoading : allLoading;
+  const error = tab === "pending" ? pendingError : allError;
 
   return (
     <div className="space-y-5">
@@ -91,7 +111,23 @@ export default function Orders() {
 
       <Card>
         <CardContent className="p-0">
-          {orders.length > 0 ? (
+          {/* Loading state */}
+          {isLoading && <OrderSkeleton />}
+
+          {/* Error state */}
+          {!isLoading && error && (
+            <div className="p-8 text-center space-y-3">
+              <AlertTriangle size={32} className="text-destructive mx-auto" />
+              <p className="text-sm text-muted-foreground">Failed to load orders</p>
+              <p className="text-xs text-muted-foreground">{error.message}</p>
+              <Button size="sm" variant="outline" onClick={() => { refetchPending(); refetchAll(); }}>
+                <RefreshCw size={14} className="mr-1" /> Retry
+              </Button>
+            </div>
+          )}
+
+          {/* Data state */}
+          {!isLoading && !error && orders.length > 0 ? (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -108,12 +144,14 @@ export default function Orders() {
                 {orders.map((o) => (
                   <TableRow key={o.id}>
                     <TableCell><StatusBadge status={o.status} /></TableCell>
-                    <TableCell className="text-sm">{o.customerId.slice(0, 8)}…</TableCell>
-                    <TableCell className="font-semibold">৳{o.amountBdt.toLocaleString()}</TableCell>
+                    <TableCell className="text-sm">
+                      {o.customerId ? `${o.customerId.slice(0, 8)}…` : "Guest"}
+                    </TableCell>
+                    <TableCell className="font-semibold">৳{o.amountBdt?.toLocaleString() ?? "—"}</TableCell>
                     <TableCell><Badge variant="outline">{o.paymentMethod ?? "—"}</Badge></TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{o.trxId ?? "—"}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {new Date(o.createdAt).toLocaleDateString("en-BD")}
+                      {o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-BD") : "—"}
                     </TableCell>
                     <TableCell>
                       {o.status === "pending" && (
@@ -135,7 +173,7 @@ export default function Orders() {
               </TableBody>
             </Table>
           ) : (
-            <Empty message={tab === "pending" ? "No pending orders — great!" : "No orders found"} />
+            !isLoading && !error && <Empty message={tab === "pending" ? "No pending orders — great!" : "No orders found"} />
           )}
         </CardContent>
       </Card>

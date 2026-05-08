@@ -24,7 +24,7 @@ import Neighbors from "./pages/Neighbors";
 
 // Users / Network
 import PppoeUsers from "./pages/PppoeUsers";
-import HotspotUsers from "./pages/HotspotUsers";
+import HotspotControl from "./pages/HotspotControl";
 import DhcpLeases from "./pages/DhcpLeases";
 import Queues from "./pages/Queues";
 
@@ -135,7 +135,7 @@ export default function App() {
 
             {/* Users */}
             <Route path="pppoe" element={<PppoeUsers />} />
-            <Route path="hotspot" element={<HotspotUsers />} />
+            <Route path="hotspot" element={<HotspotControl />} />
             <Route path="dhcp" element={<DhcpLeases />} />
             <Route path="queues" element={<Queues />} />
 

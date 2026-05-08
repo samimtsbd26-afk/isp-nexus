@@ -2,7 +2,7 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { routers } from "@isp-nexus/db";
+import { hotspotTemplates, routers, hotspotUsers } from "@isp-nexus/db";
 import { decryptText } from "../lib/crypto.js";
 import { getMikroTikClient, type MikroTikApi } from "../services/mikrotik/client.js";
 
@@ -126,11 +126,72 @@ export const mikrotikRouter = router({
 
   removeHotspotUser: adminProcedure.input(z.object({ routerId: z.string().uuid(), name: z.string() })).mutation(async ({ ctx, input }) => {
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    const logs: string[] = [];
     try {
-      const users = await client.print("/ip/hotspot/user", { name: input.name });
-      const user = users[0];
-      if (user?.[".id"]) await client.remove("/ip/hotspot/user", user[".id"]);
-      return { ok: true };
+      const name = input.name;
+
+      // 1. Remove active session
+      try {
+        const actives = await client.print("/ip/hotspot/active", { user: name });
+        for (const a of actives) {
+          if (a?.[".id"]) {
+            await client.remove("/ip/hotspot/active", a[".id"]);
+            logs.push("active removed");
+          }
+        }
+      } catch { /* ignore if not found */ }
+
+      // 2. Remove cookie
+      try {
+        const cookies = await client.print("/ip/hotspot/cookie", { user: name });
+        for (const c of cookies) {
+          if (c?.[".id"]) {
+            await client.remove("/ip/hotspot/cookie", c[".id"]);
+            logs.push("cookie removed");
+          }
+        }
+      } catch { /* ignore if not found */ }
+
+      // 3. Remove host
+      try {
+        const hosts = await client.print("/ip/hotspot/host", { user: name });
+        for (const h of hosts) {
+          if (h?.[".id"]) {
+            await client.remove("/ip/hotspot/host", h[".id"]);
+            logs.push("host removed");
+          }
+        }
+      } catch { /* ignore if not found */ }
+
+      // 4. Remove IP binding (if exists)
+      try {
+        const bindings = await client.print("/ip/hotspot/ip-binding", { comment: name });
+        for (const b of bindings) {
+          if (b?.[".id"]) {
+            await client.remove("/ip/hotspot/ip-binding", b[".id"]);
+            logs.push("binding removed");
+          }
+        }
+      } catch { /* ignore if not found */ }
+
+      // 5. Remove hotspot user
+      try {
+        const users = await client.print("/ip/hotspot/user", { name });
+        const user = users[0];
+        if (user?.[".id"]) {
+          await client.remove("/ip/hotspot/user", user[".id"]);
+          logs.push("user removed");
+        }
+      } catch { /* ignore if not found */ }
+
+      // 6. Remove DB record
+      try {
+        await ctx.db.delete(hotspotUsers)
+          .where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.routerId, input.routerId), eq(hotspotUsers.name, name)));
+        logs.push("db removed");
+      } catch { /* ignore if not found */ }
+
+      return { ok: true, logs };
     } finally { await client.close(); }
   }),
 
@@ -283,6 +344,107 @@ export const mikrotikRouter = router({
   getPppoeProfiles: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
     try { return await client.print("/ppp/profile"); }
+    finally { await client.close(); }
+  }),
+
+  // === HOTSPOT CONTROL CENTER ===
+
+  getHotspotHosts: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/host"); }
+    finally { await client.close(); }
+  }),
+
+  removeHotspotHost: adminProcedure.input(z.object({ routerId: z.string().uuid(), id: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { await client.remove("/ip/hotspot/host", input.id); return { ok: true }; }
+    finally { await client.close(); }
+  }),
+
+  getHotspotCookies: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/cookie"); }
+    finally { await client.close(); }
+  }),
+
+  removeHotspotCookie: adminProcedure.input(z.object({ routerId: z.string().uuid(), id: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { await client.remove("/ip/hotspot/cookie", input.id); return { ok: true }; }
+    finally { await client.close(); }
+  }),
+
+  getHotspotIpBindings: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/ip-binding"); }
+    finally { await client.close(); }
+  }),
+
+  addHotspotIpBinding: adminProcedure.input(z.object({
+    routerId: z.string().uuid(), macAddress: z.string(), address: z.string().optional(),
+    toAddress: z.string().optional(), type: z.enum(["regular","bypassed","blocked"]).default("regular"),
+    comment: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const { routerId, ...data } = input;
+    const client = await getRouterClient(ctx.db, ctx.orgId, routerId);
+    try {
+      const addData: Record<string, string> = { "mac-address": data.macAddress, type: data.type };
+      if (data.address) addData.address = data.address;
+      if (data.toAddress) addData["to-address"] = data.toAddress;
+      if (data.comment) addData.comment = data.comment;
+      await client.add("/ip/hotspot/ip-binding", addData);
+      return { ok: true };
+    } finally { await client.close(); }
+  }),
+
+  removeHotspotIpBinding: adminProcedure.input(z.object({ routerId: z.string().uuid(), id: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { await client.remove("/ip/hotspot/ip-binding", input.id); return { ok: true }; }
+    finally { await client.close(); }
+  }),
+
+  getHotspotServicePorts: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/service-port"); }
+    finally { await client.close(); }
+  }),
+
+  getWalledGarden: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/walled-garden"); }
+    finally { await client.close(); }
+  }),
+
+  addWalledGarden: adminProcedure.input(z.object({
+    routerId: z.string().uuid(), dstHost: z.string().optional(), dstPort: z.string().optional(),
+    action: z.enum(["allow","deny"]).default("allow"), comment: z.string().optional(),
+  })).mutation(async ({ ctx, input }) => {
+    const { routerId, ...data } = input;
+    const client = await getRouterClient(ctx.db, ctx.orgId, routerId);
+    try {
+      const addData: Record<string, string> = { action: data.action };
+      if (data.dstHost) addData["dst-host"] = data.dstHost;
+      if (data.dstPort) addData["dst-port"] = data.dstPort;
+      if (data.comment) addData.comment = data.comment;
+      await client.add("/ip/hotspot/walled-garden", addData);
+      return { ok: true };
+    } finally { await client.close(); }
+  }),
+
+  removeWalledGarden: adminProcedure.input(z.object({ routerId: z.string().uuid(), id: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { await client.remove("/ip/hotspot/walled-garden", input.id); return { ok: true }; }
+    finally { await client.close(); }
+  }),
+
+  getHotspotServers: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot"); }
+    finally { await client.close(); }
+  }),
+
+  getHotspotServerProfiles: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try { return await client.print("/ip/hotspot/profile"); }
     finally { await client.close(); }
   }),
 

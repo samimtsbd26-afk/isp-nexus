@@ -128,6 +128,32 @@ export function Empty({ message = "No data found" }: Readonly<{ message?: string
   return <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-sm gap-2">{message}</div>;
 }
 
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+export function Tabs({ value, onValueChange, children }: Readonly<{ value: string; onValueChange: (v: string) => void; children: ReactNode }>) {
+  return <div className="w-full">{children}</div>;
+}
+export function TabsList({ className, children }: Readonly<{ className?: string; children: ReactNode }>) {
+  return <div className={cn("flex gap-1 border-b border-border pb-1", className)}>{children}</div>;
+}
+export function TabsTrigger({ value, children, className }: Readonly<{ value: string; children: ReactNode; className?: string }>) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
+        "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground",
+        "hover:bg-muted",
+        className
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+export function TabsContent({ value, children }: Readonly<{ value: string; children: ReactNode }>) {
+  return <div className="mt-4">{children}</div>;
+}
+
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 interface StatCardProps {
   label: string;

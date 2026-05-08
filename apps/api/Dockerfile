@@ -26,6 +26,7 @@ COPY --chown=appuser:appgroup packages/shared/src ./packages/shared/src
 COPY --chown=appuser:appgroup packages/shared/package.json ./packages/shared/
 COPY --chown=appuser:appgroup apps/api/src ./apps/api/src
 COPY --chown=appuser:appgroup apps/api/package.json ./apps/api/
+COPY --chown=appuser:appgroup apps/hotspot ./apps/hotspot
 USER appuser
 EXPOSE 3001
 WORKDIR /app/apps/api

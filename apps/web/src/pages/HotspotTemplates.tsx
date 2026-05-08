@@ -998,7 +998,7 @@ export default function HotspotTemplates() {
               </div>
               <div className="flex-1 overflow-auto flex items-start justify-center p-4 bg-[#111] min-h-0">
                 <iframe
-                  key={livePreviewDoc.length}
+                  key={`${livePreviewDoc.length}-${previewMode}-${previewTheme}`}
                   title="Hotspot live preview"
                   srcDoc={livePreviewDoc}
                   className={`rounded-lg border-2 border-border bg-white transition-all ${previewMode === "mobile" ? "w-[375px] h-[680px]" : "w-full h-full min-h-[500px]"}`}
@@ -1015,20 +1015,47 @@ export default function HotspotTemplates() {
         {previewTmpl && (() => {
           // Build preview HTML — always produce valid content, never blank
           const previewSrcDoc = (() => {
-            if (previewTmpl.htmlContent) {
-              const css = previewTmpl.cssContent ?? "";
-              const html = css
-                ? previewTmpl.htmlContent.replace("</head>", `<style>${css}</style></head>`)
-                : previewTmpl.htmlContent;
-              return html.includes("</html>") ? html : `<html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}</body></html>`;
+            try {
+              // Case 1: Template has saved HTML content — inject CSS and wrap if needed
+              if (previewTmpl.htmlContent && previewTmpl.htmlContent.trim().length > 0) {
+                const css = previewTmpl.cssContent ?? "";
+                const html = css
+                  ? previewTmpl.htmlContent.replace("</head>", `<style>${css}</style></head>`)
+                  : previewTmpl.htmlContent;
+                // If already a full document, return as-is; otherwise wrap
+                if (html.includes("</html>")) return html;
+                return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${html}</body></html>`;
+              }
+
+              // Case 2: No saved HTML — rebuild from stored template config fields
+              const rebuiltForm: TemplateForm = {
+                ...EMPTY_FORM,
+                name: previewTmpl.name ?? "",
+                title: previewTmpl.title ?? previewTmpl.name ?? "",
+                companyName: previewTmpl.companyName ?? previewTmpl.name ?? "Skynity",
+                logoUrl: previewTmpl.logoUrl ?? "",
+                primaryColor: previewTmpl.primaryColor ?? "#06b6d4",
+                backgroundColor: previewTmpl.backgroundColor ?? "#0c0f1a",
+              };
+              return buildPreviewDoc(rebuiltForm, "dark");
+            } catch (err) {
+              // Case 3: Rendering failed — show friendly error page instead of raw JSON
+              return `<!DOCTYPE html>
+<html lang="bn">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:system-ui,sans-serif;background:#0c0f1a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
+.error-box{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:2rem;max-width:400px}
+h1{color:#ef4444;font-size:1.25rem;margin-bottom:0.5rem}
+p{color:#94a3b8;font-size:0.875rem}
+</style></head>
+<body>
+<div class="error-box">
+<h1>⚠️ Template Rendering Failed</h1>
+<p>টেমপ্লেট রেন্ডারিং ব্যর্থ হয়েছে।<br>দয়া করে টেমপ্লেট সেটিংস চেক করুন।</p>
+</div>
+</body></html>`;
             }
-            // No saved HTML — generate from stored template fields
-            return buildPreviewDoc({
-              ...EMPTY_FORM,
-              primaryColor: previewTmpl.primaryColor ?? "#06b6d4",
-              backgroundColor: previewTmpl.backgroundColor ?? "#0c0f1a",
-              companyName: previewTmpl.companyName ?? previewTmpl.name,
-            }, "dark");
           })();
 
           const deviceStyles: Record<string, string> = {

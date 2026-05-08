@@ -16,6 +16,9 @@ export default function HotspotUsers() {
   const { data: profiles } = trpc.mikrotik.getHotspotProfiles.useQuery({ routerId: selected }, { enabled: !!selected });
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [deleteStatus, setDeleteStatus] = useState("");
   const [form, setForm] = useState(EMPTY);
   const [search, setSearch] = useState("");
 
@@ -24,8 +27,16 @@ export default function HotspotUsers() {
     onError: (e) => toast.error(e.message),
   });
   const remove = trpc.mikrotik.removeHotspotUser.useMutation({
-    onSuccess: () => { refetch(); toast.success("User removed"); },
-    onError: (e) => toast.error(e.message),
+    onSuccess: (result) => {
+      refetch();
+      setDeleteStatus("ইউজার সম্পূর্ণ মুছে ফেলা হয়েছে");
+      setTimeout(() => { setShowDelete(false); setDeleteTarget(null); setDeleteStatus(""); }, 1500);
+      toast.success("User removed: " + (result.logs?.join(", ") || ""));
+    },
+    onError: (e) => {
+      setDeleteStatus("মুছতে ব্যর্থ: " + e.message);
+      toast.error(e.message);
+    },
   });
 
   const activeSessions = active ?? [];
@@ -96,7 +107,7 @@ export default function HotspotUsers() {
                           <TableCell className="text-muted-foreground text-sm">{sessionBytes(session)}</TableCell>
                           <TableCell>
                             <Button variant="ghost" size="icon"
-                              onClick={() => { if (globalThis.confirm(`Delete "${u.name}"?`)) remove.mutate({ routerId: selected, name: u.name }); }}>
+                              onClick={() => { setDeleteTarget(u); setShowDelete(true); setDeleteStatus(""); }}>
                               <Trash2 size={14} className="text-muted-foreground hover:text-destructive" />
                             </Button>
                           </TableCell>
@@ -137,6 +148,45 @@ export default function HotspotUsers() {
             <Button type="button" variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Modal */}
+      <Modal open={showDelete} onClose={() => { if (!remove.isPending) { setShowDelete(false); setDeleteTarget(null); setDeleteStatus(""); } }} title="হটস্পট ইউজার মুছুন">
+        <div className="space-y-4">
+          {deleteTarget && (
+            <div className="text-center">
+              <p className="text-sm text-muted-foreground">
+                <strong className="text-foreground">{deleteTarget.name}</strong> কে সম্পূর্ণ মুছতে চান?
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                এটি active session, cookie, host, IP binding এবং DB record সব মুছে দেবে।
+              </p>
+            </div>
+          )}
+          {deleteStatus && (
+            <div className={`text-center p-3 rounded-lg text-sm font-medium ${deleteStatus.includes("ব্যর্থ") ? "bg-red-500/10 text-red-400" : "bg-green-500/10 text-green-400"}`}>
+              {deleteStatus}
+            </div>
+          )}
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={remove.isPending || deleteStatus.includes("সম্পূর্ণ")}
+              onClick={() => {
+                if (deleteTarget) {
+                  setDeleteStatus("ইউজার মুছে ফেলা হচ্ছে...");
+                  remove.mutate({ routerId: selected, name: deleteTarget.name });
+                }
+              }}
+            >
+              {remove.isPending ? "মুছে ফেলা হচ্ছে..." : "হ্যাঁ, মুছুন"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => { setShowDelete(false); setDeleteTarget(null); setDeleteStatus(""); }} disabled={remove.isPending}>
+              বাতিল
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
