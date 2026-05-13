@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { NavLink } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { trpc } from "../../lib/trpc";
 import { joinRouter, onEvent, reconnectSocket } from "../../lib/socket";
 import { liveCache, type ResourceState } from "../../lib/cache";
 import {
-  AlertTriangle,
   Bell,
   ChevronsUpDown,
   Cpu,
   GripVertical,
-  HardDrive,
   MemoryStick,
   Network,
   RadioTower,
@@ -32,9 +31,17 @@ import {
   YAxis,
 } from "recharts";
 
-const REFRESH_MS = 5_000;
+const REFRESH_MS = 15_000;
 const SELECTED_ROUTER_KEY = "isp_monitoring_selected_router";
 const LAYOUT_KEY_PREFIX = "isp_monitoring_widget_layout";
+
+const NAV_TABS = [
+  { to: "/monitoring", label: "Overview" },
+  { to: "/monitoring/bandwidth", label: "Bandwidth" },
+  { to: "/monitoring/ping", label: "Ping" },
+  { to: "/monitoring/sfp", label: "SFP" },
+  { to: "/monitoring/wireless", label: "Wireless" },
+];
 
 const TIME_RANGES = [
   { label: "15m", ms: 15 * 60_000 },
@@ -173,13 +180,14 @@ function nextSize(size: WidgetSize) {
   return sizes[(sizes.indexOf(size) + 1) % sizes.length];
 }
 
-function TelemetryTile({ label, value, unit, sub, tone, icon: Icon }: {
+function TelemetryTile({ label, value, unit, sub, tone, icon: Icon, max = 100 }: {
   label: string;
   value: number | null;
   unit?: string;
   sub?: string;
   tone: "cyan" | "emerald" | "amber" | "red" | "violet" | "blue";
   icon: typeof Cpu;
+  max?: number;
 }) {
   const colors = {
     cyan: "#22d3ee",
@@ -189,22 +197,22 @@ function TelemetryTile({ label, value, unit, sub, tone, icon: Icon }: {
     violet: "#a78bfa",
     blue: "#60a5fa",
   };
-  const percent = value == null ? 0 : pct(value, unit === "C" ? 100 : 100) ?? 0;
+  const percent = value == null ? 0 : pct(value, max) ?? 0;
   return (
-    <div className="min-h-[132px] rounded-lg border border-slate-800 bg-slate-950/80 p-3">
+    <div className="min-h-[132px] rounded-lg border border-border bg-card p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded-md bg-slate-900">
+        <span className="grid h-8 w-8 place-items-center rounded-md bg-muted">
           <Icon size={15} style={{ color: colors[tone] }} />
         </span>
         <span className={`h-2 w-2 rounded-full ${value == null ? "bg-slate-600" : "bg-emerald-400"}`} />
       </div>
       <div className="mt-4">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-        <p className="mt-1 text-2xl font-semibold text-slate-100">{value == null ? "--" : `${Math.round(value)}${unit ?? ""}`}</p>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-900">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
+        <p className="mt-1 text-2xl font-semibold text-foreground">{value == null ? "--" : `${Math.round(value)}${unit ?? ""}`}</p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: colors[tone] }} />
         </div>
-        <p className="mt-2 truncate text-xs text-slate-500">{sub ?? "Real-time sample"}</p>
+        <p className="mt-2 truncate text-xs text-muted-foreground">{sub ?? "Real-time sample"}</p>
       </div>
     </div>
   );
@@ -220,8 +228,8 @@ function TelemetryChart({ title, data, lines, unit, height = 238 }: {
   return (
     <div className="h-full">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
-        <span className="text-xs text-slate-500">{data.length} samples</span>
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <span className="text-xs text-muted-foreground">{data.length} samples</span>
       </div>
       {data.length > 1 ? (
         <ResponsiveContainer width="100%" height={height}>
@@ -260,7 +268,7 @@ function TelemetryChart({ title, data, lines, unit, height = 238 }: {
           </AreaChart>
         </ResponsiveContainer>
       ) : (
-        <div style={{ height }} className="grid place-items-center rounded-lg border border-dashed border-slate-800 bg-slate-950/70 text-sm text-slate-500">
+        <div style={{ height }} className="grid place-items-center rounded-lg border border-dashed border-border bg-muted/50 text-sm text-muted-foreground">
           No collected data for this metric yet.
         </div>
       )}
@@ -284,18 +292,18 @@ function WidgetShell({ item, title, subtitle, children, onResize, onDragStart, o
       onDragStart={onDragStart}
       onDrop={onDrop}
       onDragOver={onDragOver}
-      className={`${sizeClass(item.size)} min-h-[220px] rounded-xl border border-slate-800 bg-slate-950/85 p-4 shadow-xl shadow-black/25`}
+      className={`${sizeClass(item.size)} min-h-[220px] rounded-xl border border-border bg-card p-4 shadow-md`}
     >
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold text-slate-100">{title}</h2>
-          {subtitle && <p className="mt-1 truncate text-xs text-slate-500">{subtitle}</p>}
+          <h2 className="truncate text-sm font-semibold text-foreground">{title}</h2>
+          {subtitle && <p className="mt-1 truncate text-xs text-muted-foreground">{subtitle}</p>}
         </div>
         <div className="flex items-center gap-1">
-          <button type="button" title="Resize widget" onClick={onResize} className="grid h-8 w-8 place-items-center rounded-md border border-slate-800 text-slate-500 hover:text-slate-100">
+          <button type="button" title="Resize widget" onClick={onResize} className="grid h-8 w-8 place-items-center rounded-md border border-border text-muted-foreground hover:text-foreground">
             <ChevronsUpDown size={14} />
           </button>
-          <span title="Drag widget" className="grid h-8 w-8 cursor-grab place-items-center rounded-md border border-slate-800 text-slate-500">
+          <span title="Drag widget" className="grid h-8 w-8 cursor-grab place-items-center rounded-md border border-border text-muted-foreground">
             <GripVertical size={14} />
           </span>
         </div>
@@ -323,6 +331,7 @@ export default function Monitoring() {
   const prevRouterRef = useRef("");
   const [liveInterfaces, setLiveInterfaces] = useState<LiveInterface[]>([]);
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<Array<{ time: string; hotspot: number; pppoe: number; total: number }>>([]);
 
   useEffect(() => setLayout(loadLayout(me?.id)), [me?.id]);
 
@@ -340,28 +349,28 @@ export default function Monitoring() {
 
   const resourceQuery = trpc.monitoring.getResourceSnapshots.useQuery(
     { routerId: selected, since },
-    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 0, gcTime: 0 },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
   );
   const bandwidthQuery = trpc.monitoring.getBandwidthSnapshots.useQuery(
     { routerId: selected, since },
-    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 0, gcTime: 0 },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
   );
   const pingQuery = trpc.monitoring.getPingSnapshots.useQuery(
     { routerId: selected, since },
-    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 0, gcTime: 0 },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
   );
   const sfpQuery = trpc.monitoring.getSfpSnapshots.useQuery(
     { routerId: selected },
-    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 0, gcTime: 0 },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
   );
   const alertsQuery = trpc.monitoring.getAlerts.useQuery(
     { routerId: selected, limit: 12 },
-    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 0, gcTime: 0 },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
   );
-  const hotspotUsersQuery = trpc.mikrotik.getHotspotUsers.useQuery({ routerId: selected }, { enabled: !!selected, refetchInterval: REFRESH_MS });
-  const activeHotspotQuery = trpc.mikrotik.getActiveHotspotSessions.useQuery({ routerId: selected }, { enabled: !!selected, refetchInterval: REFRESH_MS });
-  const pppoeUsersQuery = trpc.mikrotik.getPppoeUsers.useQuery({ routerId: selected }, { enabled: !!selected, refetchInterval: REFRESH_MS });
-  const activePppoeQuery = trpc.mikrotik.getActivePppoeSessions.useQuery({ routerId: selected }, { enabled: !!selected, refetchInterval: REFRESH_MS });
+  const liveStatsQuery = trpc.mikrotik.getLiveStats.useQuery(
+    { routerId: selected },
+    { enabled: !!selected, refetchInterval: REFRESH_MS, staleTime: 12_000, gcTime: 0 },
+  );
 
   useEffect(() => {
     if (!routerRows?.length) return;
@@ -398,6 +407,12 @@ export default function Monitoring() {
       cancelled = true;
     };
   }, [selected, since]);
+
+  useEffect(() => {
+    const hotspot = liveStatsQuery.data?.activeHotspotSessions?.length ?? 0;
+    const pppoe = liveStatsQuery.data?.activePppoeSessions?.length ?? 0;
+    setSessionHistory((prev) => [...prev.slice(-59), { time: timeLabel(new Date()), hotspot, pppoe, total: hotspot + pppoe }]);
+  }, [liveStatsQuery.dataUpdatedAt]);
 
   useEffect(() => {
     if (!selected || hydratedRouterId !== selected) return;
@@ -439,10 +454,10 @@ export default function Monitoring() {
   const memoryPct = latestResource?.totalMemoryMb
     ? Math.round(((latestResource.totalMemoryMb - (latestResource.freeMemoryMb ?? 0)) / latestResource.totalMemoryMb) * 100)
     : null;
-  const hotspotUsers = hotspotUsersQuery.data?.length ?? null;
-  const pppoeUsers = pppoeUsersQuery.data?.length ?? null;
-  const activeSessions = (activeHotspotQuery.data?.length ?? 0) + (activePppoeQuery.data?.length ?? 0);
-  const activeHotspotSessions = activeHotspotQuery.data ?? [];
+  const hotspotUsers = liveStatsQuery.data?.hotspotUserCount ?? null;
+  const pppoeUsers = liveStatsQuery.data?.activePppoeSessions?.length ?? null;
+  const activeHotspotSessions = liveStatsQuery.data?.activeHotspotSessions ?? [];
+  const activeSessions = activeHotspotSessions.length + (liveStatsQuery.data?.activePppoeSessions?.length ?? 0);
   const activeHotspotUsers = new Set(activeHotspotSessions.map((session: any) => hotspotSessionUser(session)).filter(Boolean)).size;
 
   const bandwidthRows = bandwidthQuery.data ?? [];
@@ -468,7 +483,6 @@ export default function Monitoring() {
   const wireguardRows = latestInterfaces.filter((row) => /wg|wireguard/i.test(row.name));
   const hotspotRows = latestInterfaces.filter((row) => /hotspot/i.test(row.name));
   const totalWan = wanRows.reduce((sum, row) => sum + row.rx + row.tx, 0);
-  const totalWireguard = wireguardRows.reduce((sum, row) => sum + row.rx + row.tx, 0);
 
   const trafficData = useMemo(() => {
     const grouped = new Map<string, { time: string; wanRx: number; wanTx: number; wg: number; starlink: number; interfaces: number }>();
@@ -496,16 +510,10 @@ export default function Monitoring() {
     loss: row.packetLossPct == null ? null : Number(row.packetLossPct.toFixed(1)),
   })), [pingQuery.data]);
 
-  const sessionData = useMemo(() => {
-    const updatedAt = Math.max(activeHotspotQuery.dataUpdatedAt || 0, activePppoeQuery.dataUpdatedAt || 0);
-    if (!updatedAt) return [];
-    return [{
-      time: timeLabel(new Date(updatedAt)),
-      hotspot: activeHotspotQuery.data?.length ?? 0,
-      pppoe: activePppoeQuery.data?.length ?? 0,
-      total: activeSessions,
-    }];
-  }, [activeHotspotQuery.data?.length, activeHotspotQuery.dataUpdatedAt, activePppoeQuery.data?.length, activePppoeQuery.dataUpdatedAt, activeSessions]);
+  const hadWireguard = useMemo(
+    () => bandwidthRows.some((row) => /wg|wireguard/i.test(row.interfaceName ?? "")),
+    [bandwidthRows],
+  );
 
   const computedAlerts: AlertItem[] = useMemo(() => {
     const now = new Date();
@@ -520,11 +528,11 @@ export default function Monitoring() {
     if (latestLoss != null && latestLoss > 0) {
       items.push({ id: "packet-loss", severity: "warning", message: `Packet loss detected at ${latestLoss.toFixed(1)}%`, createdAt: now, source: "ping" });
     }
-    if (selectedRouter?.isActive && wireguardRows.length === 0) {
+    if (selectedRouter?.isActive && hadWireguard && wireguardRows.length === 0) {
       items.push({ id: "tunnel-down", severity: "warning", message: "No WireGuard interface traffic visible in the latest sample", createdAt: now, source: "wireguard" });
     }
     return items;
-  }, [latestResource?.cpuLoadPct, pingQuery.data, selectedRouter, wireguardRows.length]);
+  }, [hadWireguard, latestResource?.cpuLoadPct, pingQuery.data, selectedRouter, wireguardRows.length]);
 
   const alerts: AlertItem[] = [
     ...computedAlerts,
@@ -572,18 +580,17 @@ export default function Monitoring() {
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <TelemetryTile label="CPU Load" value={latestResource?.cpuLoadPct ?? null} unit="%" icon={Cpu} tone={(latestResource?.cpuLoadPct ?? 0) > 80 ? "red" : "cyan"} />
           <TelemetryTile label="Memory" value={memoryPct} unit="%" icon={MemoryStick} tone={(memoryPct ?? 0) > 80 ? "red" : "violet"} sub={latestResource?.totalMemoryMb ? `${latestResource.freeMemoryMb ?? 0} MB free` : undefined} />
-          <TelemetryTile label="Temperature" value={latestResource?.temperatureC ?? null} unit="C" icon={Thermometer} tone={(latestResource?.temperatureC ?? 0) > 70 ? "red" : "amber"} />
-          <TelemetryTile label="Voltage" value={latestResource?.voltageV ?? latestSfp?.voltageV ?? null} unit="V" icon={Zap} tone="blue" />
-          <TelemetryTile label="Hotspot Active" value={activeHotspotQuery.data?.length ?? 0} icon={Wifi} tone="emerald" sub={`${activeHotspotUsers} online users`} />
-          <TelemetryTile label="Online Users" value={activeSessions} icon={ShieldCheck} tone="emerald" sub={`${activeHotspotQuery.data?.length ?? 0} hotspot / ${activePppoeQuery.data?.length ?? 0} PPPoE`} />
-          <TelemetryTile label="Sessions" value={activeSessions} icon={Users} tone="blue" sub={`${hotspotUsers ?? 0} hotspot accounts`} />
-          <TelemetryTile label="PPPoE Users" value={pppoeUsers} icon={Users} tone="blue" />
+          <TelemetryTile label="Temperature" value={latestResource?.temperatureC ?? null} unit="C" icon={Thermometer} tone={(latestResource?.temperatureC ?? 0) > 70 ? "red" : "amber"} max={85} />
+          <TelemetryTile label="Voltage" value={latestResource?.voltageV ?? latestSfp?.voltageV ?? null} unit="V" icon={Zap} tone="blue" max={6} />
+          <TelemetryTile label="Hotspot Active" value={activeHotspotSessions.length} icon={Wifi} tone="emerald" sub={`${activeHotspotUsers} unique users`} />
+          <TelemetryTile label="Online Sessions" value={activeSessions} icon={ShieldCheck} tone="emerald" sub={`${activeHotspotSessions.length} hotspot / ${liveStatsQuery.data?.activePppoeSessions?.length ?? 0} PPPoE`} />
+          <TelemetryTile label="PPPoE Users" value={pppoeUsers} icon={Users} tone="blue" sub={`${hotspotUsers ?? 0} hotspot accounts`} />
           <TelemetryTile label="Interfaces" value={latestInterfaces.length} icon={Network} tone="cyan" sub={`${formatBps(totalWan)} WAN now`} />
         </div>
       ),
     },
     wan: {
-      title: "WAN_STARLINK Traffic",
+      title: "WAN / Starlink Traffic",
       subtitle: `${formatBps(totalWan)} latest aggregate`,
       render: () => <TelemetryChart title="WAN RX / TX" data={trafficData} unit="K" lines={[{ key: "wanRx", name: "WAN RX", color: "#22c55e" }, { key: "wanTx", name: "WAN TX", color: "#38bdf8" }]} />,
     },
@@ -608,9 +615,9 @@ export default function Monitoring() {
       render: () => (
         <div className="space-y-3">
           <TelemetryChart title="All Interface Throughput" data={trafficData} unit="K" height={180} lines={[{ key: "interfaces", name: "All interfaces", color: "#22d3ee" }, { key: "starlink", name: "Starlink", color: "#f59e0b" }]} />
-          <div className="max-h-[320px] overflow-auto rounded-lg border border-slate-800">
+          <div className="max-h-[320px] overflow-auto rounded-lg border border-border">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
+              <thead className="sticky top-0 bg-card text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Interface</th>
                   <th className="px-3 py-2 text-right">RX</th>
@@ -620,17 +627,17 @@ export default function Monitoring() {
               </thead>
               <tbody>
                 {filteredInterfaces.slice(0, 18).map((row) => (
-                  <tr key={row.name} className="border-t border-slate-900">
-                    <td className="px-3 py-2 font-mono text-xs text-slate-200">{row.name}</td>
+                  <tr key={row.name} className="border-t border-border">
+                    <td className="px-3 py-2 font-mono text-xs text-foreground">{row.name}</td>
                     <td className="px-3 py-2 text-right text-emerald-300">{formatBps(row.rx)}</td>
                     <td className="px-3 py-2 text-right text-cyan-300">{formatBps(row.tx)}</td>
-                    <td className="px-3 py-2 text-right text-xs text-slate-500">
+                    <td className="px-3 py-2 text-right text-xs text-muted-foreground">
                       {/starlink/i.test(row.name) ? "Starlink" : /wg|wireguard/i.test(row.name) ? "WireGuard" : /hotspot/i.test(row.name) ? "Hotspot" : /wan|ether1|internet/i.test(row.name) ? "WAN" : "LAN"}
                     </td>
                   </tr>
                 ))}
                 {filteredInterfaces.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-10 text-center text-sm text-slate-500">No interfaces match the current filter.</td></tr>
+                  <tr><td colSpan={4} className="px-3 py-10 text-center text-sm text-muted-foreground">No interfaces match the current filter.</td></tr>
                 )}
               </tbody>
             </table>
@@ -643,10 +650,10 @@ export default function Monitoring() {
       subtitle: `${activeSessions} active sessions`,
       render: () => (
         <div className="space-y-4">
-          <TelemetryChart title="Active Sessions" data={sessionData} height={150} lines={[{ key: "hotspot", name: "Hotspot", color: "#22c55e" }, { key: "pppoe", name: "PPPoE", color: "#60a5fa" }, { key: "total", name: "Total", color: "#f59e0b" }]} />
-          <div className="max-h-[300px] overflow-auto rounded-lg border border-slate-800">
+          <TelemetryChart title="Active Sessions" data={sessionHistory} height={150} lines={[{ key: "hotspot", name: "Hotspot", color: "#22c55e" }, { key: "pppoe", name: "PPPoE", color: "#60a5fa" }, { key: "total", name: "Total", color: "#f59e0b" }]} />
+          <div className="max-h-[300px] overflow-auto rounded-lg border border-border">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-950 text-xs uppercase tracking-wide text-slate-500">
+              <thead className="sticky top-0 bg-card text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Username</th>
                   <th className="px-3 py-2 text-left">IP</th>
@@ -657,16 +664,16 @@ export default function Monitoring() {
               </thead>
               <tbody>
                 {activeHotspotSessions.slice(0, 18).map((session: any) => (
-                  <tr key={session[".id"] ?? `${hotspotSessionUser(session)}-${session.address}`} className="border-t border-slate-900">
-                    <td className="px-3 py-2 font-mono text-xs text-slate-100">{hotspotSessionUser(session) || "--"}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-400">{session.address ?? session["ip-address"] ?? "--"}</td>
-                    <td className="px-3 py-2 font-mono text-xs text-slate-400">{session["mac-address"] ?? "--"}</td>
-                    <td className="px-3 py-2 text-right text-xs text-slate-400">{session.uptime ?? "--"}</td>
+                  <tr key={session[".id"] ?? `${hotspotSessionUser(session)}-${session.address}`} className="border-t border-border">
+                    <td className="px-3 py-2 font-mono text-xs text-foreground">{hotspotSessionUser(session) || "--"}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{session.address ?? session["ip-address"] ?? "--"}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{session["mac-address"] ?? "--"}</td>
+                    <td className="px-3 py-2 text-right text-xs text-muted-foreground">{session.uptime ?? "--"}</td>
                     <td className="px-3 py-2 text-right text-xs text-emerald-300">{hotspotSessionBytes(session)}</td>
                   </tr>
                 ))}
                 {activeHotspotSessions.length === 0 && (
-                  <tr><td colSpan={5} className="px-3 py-10 text-center text-sm text-slate-500">No active hotspot sessions returned by MikroTik.</td></tr>
+                  <tr><td colSpan={5} className="px-3 py-10 text-center text-sm text-muted-foreground">No active hotspot sessions returned by MikroTik.</td></tr>
                 )}
               </tbody>
             </table>
@@ -685,7 +692,7 @@ export default function Monitoring() {
             { label: "WireGuard", value: wireguardRows[0]?.name ?? "No tunnel sample", icon: ShieldCheck, ok: wireguardRows.length > 0 },
             { label: "Hotspot", value: hotspotRows[0]?.name ?? `${hotspotUsers ?? 0} users`, icon: Wifi, ok: (hotspotUsers ?? 0) > 0 || hotspotRows.length > 0 },
           ].map(({ label, value, icon: Icon, ok }, index) => (
-            <div key={label} className="relative rounded-lg border border-slate-800 bg-slate-950/80 p-4">
+            <div key={label} className="relative rounded-lg border border-border bg-card p-4">
               {index < 3 && <div className="absolute -right-3 top-1/2 hidden h-px w-6 bg-cyan-400/50 sm:block" />}
               <div className="flex items-center justify-between gap-3">
                 <span className={`grid h-10 w-10 place-items-center rounded-lg ${ok ? "bg-cyan-400/10 text-cyan-300" : "bg-red-400/10 text-red-300"}`}>
@@ -693,8 +700,8 @@ export default function Monitoring() {
                 </span>
                 <span className={`h-2.5 w-2.5 rounded-full ${ok ? "bg-emerald-400" : "bg-red-500"}`} />
               </div>
-              <p className="mt-4 text-sm font-semibold text-slate-100">{label}</p>
-              <p className="mt-1 truncate text-xs text-slate-500">{value}</p>
+              <p className="mt-4 text-sm font-semibold text-foreground">{label}</p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">{value}</p>
             </div>
           ))}
         </div>
@@ -706,20 +713,20 @@ export default function Monitoring() {
       render: () => (
         <div className="space-y-3">
           {alerts.map((alert) => (
-            <div key={alert.id} className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+            <div key={alert.id} className="rounded-lg border border-border bg-muted/80 p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className={`text-xs font-semibold uppercase ${alert.severity === "critical" ? "text-red-300" : "text-amber-300"}`}>{alert.severity}</span>
-                <span className="text-[11px] text-slate-500">{new Date(alert.createdAt).toLocaleTimeString()}</span>
+                <span className="text-[11px] text-muted-foreground">{new Date(alert.createdAt).toLocaleTimeString()}</span>
               </div>
-              <p className="mt-2 text-sm leading-5 text-slate-300">{alert.message}</p>
-              <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-600">{alert.source}</p>
+              <p className="mt-2 text-sm leading-5 text-foreground">{alert.message}</p>
+              <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{alert.source}</p>
             </div>
           ))}
           {!alerts.length && (
-            <div className="grid min-h-[220px] place-items-center rounded-lg border border-dashed border-slate-800 bg-slate-950/70 text-center">
+            <div className="grid min-h-[220px] place-items-center rounded-lg border border-dashed border-border bg-muted/50 text-center">
               <div>
-                <Bell size={28} className="mx-auto mb-2 text-slate-600" />
-                <p className="text-sm text-slate-500">No active alerts for this router.</p>
+                <Bell size={28} className="mx-auto mb-2 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">No active alerts for this router.</p>
               </div>
             </div>
           )}
@@ -729,43 +736,58 @@ export default function Monitoring() {
   };
 
   return (
-    <div className="min-h-screen space-y-5 bg-[#030712] text-slate-100">
-      <div className="sticky top-0 z-20 rounded-xl border border-slate-800 bg-slate-950/95 p-3 shadow-xl shadow-black/30 backdrop-blur">
+    <div className="min-h-screen space-y-5 bg-background text-foreground">
+      <div className="sticky top-0 z-20 rounded-xl border border-border bg-card/95 p-3 shadow-xl shadow-md backdrop-blur">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-400">NOC Telemetry Mesh</p>
-            <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-slate-50">Enterprise Monitoring</h1>
+            <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-foreground">Enterprise Monitoring</h1>
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[220px_240px_220px_180px] xl:w-auto">
-            <select title="Select router" value={selected} onChange={(event) => setRouterId(event.target.value)} className="h-10 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none">
+            <select title="Select router" value={selected} onChange={(event) => setRouterId(event.target.value)} className="h-10 rounded-lg border border-border bg-muted px-3 text-sm text-foreground outline-none">
               {routerRows?.map((router) => <option key={router.id} value={router.id}>{router.name}</option>)}
             </select>
             <label className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search interfaces or alerts" className="h-10 w-full rounded-lg border border-slate-700 bg-slate-900 pl-9 pr-3 text-sm text-slate-100 outline-none placeholder:text-slate-600" />
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search interfaces or alerts" className="h-10 w-full rounded-lg border border-border bg-muted pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground" />
             </label>
-            <div className="flex overflow-hidden rounded-lg border border-slate-700 bg-slate-900">
+            <div className="flex overflow-hidden rounded-lg border border-border bg-muted">
               {TIME_RANGES.map((range) => (
-                <button key={range.label} type="button" onClick={() => setTimeRangeMs(range.ms)} className={`flex-1 px-3 text-xs font-semibold ${timeRangeMs === range.ms ? "bg-cyan-400 text-slate-950" : "text-slate-400 hover:text-slate-100"}`}>
+                <button key={range.label} type="button" onClick={() => setTimeRangeMs(range.ms)} className={`flex-1 px-3 text-xs font-semibold ${timeRangeMs === range.ms ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
                   {range.label}
                 </button>
               ))}
             </div>
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 text-xs text-slate-400">
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${liveConnected ? "bg-emerald-400" : "bg-red-500"}`} />
+                <span className={`h-2.5 w-2.5 rounded-full ${liveConnected ? "animate-pulse bg-emerald-400" : "bg-red-500"}`} />
                 {liveConnected ? "Live connected" : "Disconnected"}
               </span>
               <Signal size={14} className={liveConnected ? "text-emerald-300" : "text-red-300"} />
             </div>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-500">
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
           <span>Last query {routersUpdatedAt ? new Date(routersUpdatedAt).toLocaleTimeString() : "--"}</span>
           <span>Last socket {lastLiveAt ? lastLiveAt.toLocaleTimeString() : "--"}</span>
-          <span>Model <strong className="text-slate-300">{selectedRouter?.model ?? "unknown"}</strong></span>
-          <span>RouterOS <strong className="text-slate-300">{selectedRouter?.rosVersion ?? "unknown"}</strong></span>
+          <span>Model <strong className="text-foreground">{selectedRouter?.model ?? "unknown"}</strong></span>
+          <span>RouterOS <strong className="text-foreground">{selectedRouter?.rosVersion ?? "unknown"}</strong></span>
         </div>
+      </div>
+
+      <div className="flex gap-1 overflow-x-auto rounded-xl border border-border bg-card/95 p-1 shadow-xl shadow-md">
+        {NAV_TABS.map(({ to, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end
+            className={({ isActive }) =>
+              `flex-shrink-0 rounded-lg px-4 py-2 text-xs font-semibold transition-colors ${isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`
+            }
+          >
+            {label}
+          </NavLink>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">

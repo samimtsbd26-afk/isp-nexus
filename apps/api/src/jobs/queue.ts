@@ -15,8 +15,7 @@ import {
   organizations,
 } from "@isp-nexus/db";
 import { and, eq } from "drizzle-orm";
-import { decryptText } from "../lib/crypto.js";
-import { getMikroTikClient } from "../services/mikrotik/client.js";
+import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
 import { sendAlert } from "../services/telegram/bot.js";
 
 function getQueueConnection() {
@@ -83,11 +82,9 @@ export function startMonitoringWorker(): Worker {
     const allRouters = await db.select().from(routers).where(eq(routers.isActive, true));
     logger.info({ jobId: job.id, routers: allRouters.length }, "Monitoring job started");
     for (const r of allRouters) {
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
         const [res] = await client.print("/system/resource");
         const [health] = await client.print("/system/health").catch((err) => {
           logger.warn({ err, routerId: r.id }, "Router health fetch failed");
@@ -119,22 +116,28 @@ export function startMonitoringWorker(): Worker {
         });
 
         const interfaces = await client.print("/interface");
+        const ifaceNames = interfaces
+          .map((iface: Record<string, any>) => interfaceName(iface))
+          .filter((n): n is string => !!n);
         const liveInterfaces: Array<{ name: string; rxBps: number; txBps: number }> = [];
-        for (const iface of interfaces) {
-          const name = interfaceName(iface);
-          if (!name) continue;
-          try {
-            const [traffic] = await client.exec("/interface", "monitor-traffic", { interface: name, once: "" });
-            const rxBps = trafficRate(traffic ?? {}, "rx-bits-per-second", "rxBitsPerSecond");
-            const txBps = trafficRate(traffic ?? {}, "tx-bits-per-second", "txBitsPerSecond");
-            liveInterfaces.push({ name, rxBps, txBps });
-            await db.insert(bandwidthSnapshots).values({
-              routerId: r.id, interfaceName: name,
-              rxRateBps: rxBps,
-              txRateBps: txBps,
+        if (ifaceNames.length > 0) {
+          const trafficRows = await client
+            .exec("/interface", "monitor-traffic", { interface: ifaceNames.join(","), once: "" })
+            .catch((err: unknown) => {
+              logger.warn({ err, routerId: r.id }, "Batch interface traffic fetch failed");
+              return [] as Record<string, any>[];
             });
-          } catch (err) {
-            logger.warn({ err, routerId: r.id, interfaceName: name }, "Interface traffic fetch failed");
+          const bwSnapshots: Array<{ routerId: string; interfaceName: string; rxRateBps: number; txRateBps: number }> = [];
+          for (const traffic of trafficRows) {
+            const name = interfaceName(traffic);
+            if (!name) continue;
+            const rxBps = trafficRate(traffic, "rx-bits-per-second", "rxBitsPerSecond");
+            const txBps = trafficRate(traffic, "tx-bits-per-second", "txBitsPerSecond");
+            liveInterfaces.push({ name, rxBps, txBps });
+            bwSnapshots.push({ routerId: r.id, interfaceName: name, rxRateBps: rxBps, txRateBps: txBps });
+          }
+          if (bwSnapshots.length > 0) {
+            await db.insert(bandwidthSnapshots).values(bwSnapshots);
           }
         }
         emitMonitoring?.(`router:${r.id}`, "bandwidth:update", { routerId: r.id, interfaces: liveInterfaces });
@@ -234,6 +237,16 @@ export function startExpiryWorker(): Worker {
   }, getQueueConnection());
 }
 
+export function startWarningWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("warnings", async (job) => {
+    logger.info({ jobId: job.id }, "Warning job started");
+    const { sendExpiryWarnings } = await import("../services/subscriptions/expiry.js");
+    await sendExpiryWarnings();
+    logger.info({ jobId: job.id }, "Warning job completed");
+  }, getQueueConnection());
+}
+
 export function startSyncWorker(): Worker {
   const db = createDb(env.DATABASE_URL);
   return new Worker("sync", async (job) => {
@@ -264,16 +277,19 @@ export async function scheduleJobs(): Promise<void> {
   const expiryQueue = new Queue("expiry", getQueueConnection());
   const syncQueue = new Queue("sync", getQueueConnection());
   const securityQueue = new Queue("security", getQueueConnection());
+  const warningQueue = new Queue("warnings", getQueueConnection());
   try {
     await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
     await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
     await expiryQueue.add("expire", {}, { repeat: { every: 15 * 60 * 1000 } }); // 15 min
+    await warningQueue.add("warn", {}, { repeat: { every: 60 * 60 * 1000 } }); // 1 hour
     await syncQueue.add("sync", {}, { repeat: { every: 5 * 60 * 1000 } }); // 5 min
     await securityQueue.add("check", {}, { repeat: { every: 10 * 60 * 1000 } }); // 10 min
   } finally {
     await monitoringQueue.close();
     await alertsQueue.close();
     await expiryQueue.close();
+    await warningQueue.close();
     await syncQueue.close();
     await securityQueue.close();
   }

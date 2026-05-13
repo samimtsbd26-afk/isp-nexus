@@ -115,7 +115,12 @@ export default function Dashboard() {
     error: liveError,
   } = trpc.mikrotik.getLiveStats.useQuery(
     { routerId: firstRouterId! },
-    { enabled: !!firstRouterId, refetchInterval: 10_000 }
+    {
+      enabled: !!firstRouterId,
+      refetchInterval: 30_000,
+      retry: 0,
+      staleTime: 25_000,
+    }
   );
 
   const v = (n: number | undefined) => (isLoading ? "—" : (n ?? 0).toLocaleString());
@@ -252,7 +257,7 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Live · auto-refresh 10s
+              Live · auto-refresh 30s
             </div>
           </div>
 
