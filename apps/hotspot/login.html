@@ -671,6 +671,12 @@ a{text-decoration:none;color:inherit}
   <!-- Step 3: TRX submit -->
   <div id="pay-step3" style="display:none;width:100%;max-width:440px" class="ai">
     <div class="card" style="margin-bottom:0">
+      <!-- Logged-in user info (readonly) — shown when user has a session -->
+      <div id="loggedUserInfo" style="display:none;margin-bottom:16px;padding:12px 14px;background:var(--acc-dim);border:1px solid rgba(var(--acc-rgb,0,212,255),.4);border-radius:var(--rsm)">
+        <div style="font-size:10px;color:var(--tx2);font-weight:800;letter-spacing:.5px;text-transform:uppercase;margin-bottom:5px">নিবন্ধিত অ্যাকাউন্ট</div>
+        <div style="font-size:14px;font-weight:900;color:var(--tx)" id="luin-name">—</div>
+        <div style="font-size:12px;color:var(--tx2);font-family:monospace;margin-top:2px" id="luin-phone">—</div>
+      </div>
       <!-- Guest info — shown only if not logged in -->
       <div id="guestFields">
         <div class="fgroup">
@@ -1593,6 +1599,17 @@ function goPayStep3(){
   // Show guest fields only if not logged in
   const gf = document.getElementById('guestFields');
   if(gf) gf.style.display = S.user ? 'none' : 'block';
+  // Show readonly user info card when logged in
+  const luInfo = document.getElementById('loggedUserInfo');
+  if (luInfo) {
+    luInfo.style.display = S.user ? 'block' : 'none';
+    if (S.user) {
+      const n = document.getElementById('luin-name');
+      const p = document.getElementById('luin-phone');
+      if (n) n.textContent = S.user.name || S.user.phone || '—';
+      if (p) p.textContent = S.user.phone || '—';
+    }
+  }
 }
 function updatePaySteps(active){
   S.payment.step = active;
@@ -1609,14 +1626,15 @@ function updatePaySteps(active){
 
 async function submitPayment(){
   clearErrs();
-  const isGuest = !S.user;
   const sender = document.getElementById('pSender').value.trim();
   const trxId  = document.getElementById('pTrx').value.trim().toUpperCase();
-  let valid=true;
+  let valid = true;
 
-  // Validate guest fields if not logged in
+  if(!/^01\d{9}$/.test(sender)){ showErr('pSender','pSenderErr'); valid=false; }
+  if(trxId.length < 5){ setErr('pTrxErr','pTrxErrTxt','কমপক্ষে ৫ অক্ষর'); showErr('pTrx','pTrxErr'); valid=false; }
+
   let guestName='', guestPhone='', guestPass='';
-  if(isGuest){
+  if(!S.user){
     guestName  = (document.getElementById('pName')?.value || '').trim();
     guestPhone = (document.getElementById('pPhone')?.value || '').trim();
     guestPass  = (document.getElementById('pPass')?.value || '');
@@ -1624,46 +1642,65 @@ async function submitPayment(){
     if(!/^01\d{9}$/.test(guestPhone)){ showErr('pPhone','pPhoneErr'); valid=false; }
     if(guestPass.length < 6){ showErr('pPass','pPassErr'); valid=false; }
   }
-
-  if(!/^01\d{9}$/.test(sender)){ showErr('pSender','pSenderErr'); valid=false; }
-  if(trxId.length < 5){ setErr('pTrxErr','pTrxErrTxt','কমপক্ষে ৫ অক্ষর'); showErr('pTrx','pTrxErr'); valid=false; }
   if(!valid) return;
 
   setBtnLoading(null,'paySubmitTxt','জমা হচ্ছে…', true);
   document.querySelector('#pay-step3 .btn-primary').disabled = true;
   try{
-    const finalName  = S.user?.name  || guestName  || sender;
-    const finalPhone = S.user?.phone || guestPhone || sender;
-    const finalPass  = guestPass || S.user?.phone || sender;
-    const body = {
-      fullName: finalName,
-      phone: finalPhone,
-      password: finalPass,
-      paymentMethod: selMethod,
-      trxId,
-      paymentFrom: sender,
-      packageId: S.pkg?.id,
-      packageCode: S.pkg?.name?.toLowerCase().replace(/[^a-z0-9]/g,''),
-      mac: getMac(), ip: getIp()
+    let orderId, finalPhone, finalPass;
+
+    if(S.user){
+      // Renewal flow — existing customer (logged in via hotspot session)
+      const sess = loadHotspotSession();
+      if(!sess?.sessionToken) throw Object.assign(new Error('সেশন মেয়াদ শেষ। পেজ রিফ্রেশ করুন।'), {status:401});
+      const res = await api('/portal/renew-order',{method:'POST',body:JSON.stringify({
+        sessionToken: sess.sessionToken,
+        packageId: S.pkg?.id,
+        paymentMethod: selMethod,
+        trxId,
+        paymentFrom: sender,
+      })});
+      orderId = res?.data?.orderId;
+      finalPhone = res?.data?.phone || S.user.phone;
+      finalPass  = '';  // resolved from hotspot session on approval
+    } else {
+      // Guest flow — new user
+      const res = await api('/portal/payment',{method:'POST',body:JSON.stringify({
+        fullName: guestName,
+        phone: guestPhone,
+        password: guestPass,
+        paymentMethod: selMethod,
+        trxId,
+        paymentFrom: sender,
+        packageId: S.pkg?.id,
+        packageCode: S.pkg?.name?.toLowerCase().replace(/[^a-z0-9]/g,''),
+        mac: getMac(), ip: getIp(),
+      })});
+      orderId     = res?.data?.orderId;
+      finalPhone  = guestPhone;
+      finalPass   = guestPass;
+      await mintHotspotSession(finalPhone, finalPass, {
+        name: guestName,
+        mac: normalizeMacFromUrl(),
+        lastTrx: trxId,
+        lastPkg: S.pkg?.name,
+        lastAmount: S.pkg?.price,
+        lastMethod: selMethod,
+      });
+    }
+
+    S.pendingPayData = {
+      orderId, trxId, method: selMethod,
+      amount: S.pkg?.price, pkg: S.pkg?.name,
+      sender, time: new Date().toLocaleString('en-BD'),
+      phone: finalPhone, pass: finalPass,
     };
-    const res = await api('/portal/payment',{method:'POST',body:JSON.stringify(body)});
-    const orderId = res?.data?.orderId;
-    S.pendingPayData = {orderId, trxId, method:selMethod, amount:S.pkg?.price, pkg:S.pkg?.name, sender, time:new Date().toLocaleString('en-BD'), phone:finalPhone, pass:finalPass};
-    await mintHotspotSession(finalPhone, finalPass, {
-      name: finalName,
-      mac: normalizeMacFromUrl(),
-      lastTrx: trxId,
-      lastPkg: S.pkg?.name,
-      lastAmount: S.pkg?.price,
-      lastMethod: selMethod,
-    });
     showReceipt(S.pendingPayData);
     startPayPoll(orderId);
     goScreen('s-pending-pay');
   }catch(err){
     const msg = err.message || 'পেমেন্ট জমা ব্যর্থ';
-    if(msg.includes('TRX') || msg.includes('trx') || msg.includes('ট্রানজ')){ setErr('pTrxErr','pTrxErrTxt',msg); showErr('pTrx','pTrxErr'); }
-    else { setErr('pTrxErr','pTrxErrTxt',msg); showErr('pTrx','pTrxErr'); }
+    setErr('pTrxErr','pTrxErrTxt', msg); showErr('pTrx','pTrxErr');
   }finally{
     setBtnLoading(null,'paySubmitTxt','পেমেন্ট জমা দিন', false);
     document.querySelector('#pay-step3 .btn-primary').disabled = false;

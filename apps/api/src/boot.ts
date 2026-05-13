@@ -34,7 +34,8 @@ import { logger } from "./lib/logger.js";
 import { encryptText, decryptText } from "./lib/crypto.js";
 import { getRedis } from "./lib/redis.js";
 import { verifyAccessToken } from "./auth/session.js";
-import { initBot, stopBot, sendTrialRequestNotification, sendNewUserCreatedNotification } from "./services/telegram/bot.js";
+import { initBot, stopBot, sendTrialRequestNotification, sendNewUserCreatedNotification, sendOrderNotification } from "./services/telegram/bot.js";
+import { logActivity } from "./lib/activity.js";
 import { formatPackageDurationShort, buildPlanDisplay } from "@isp-nexus/shared";
 import { startMonitoringWorker, startAlertsWorker, startExpiryWorker, startSyncWorker, startSecurityWorker, startWarningWorker, startRetentionWorker, scheduleJobs, setMonitoringEmitter } from "./jobs/queue.js";
 import { allowedCorsOrigins, refreshCorsOrigins } from "./lib/cors-state.js";
@@ -376,6 +377,100 @@ app.post("/api/portal/payment", async (c) => {
       emitCustomerEvent(data.customerId, "order:created", { orderId: data.orderId, amountBdt: pkg.priceBdt });
     }
     return c.json({ data: { ...data, username: body.phone, password: body.password } });
+  } catch (error) {
+    return portalError(c, error);
+  }
+});
+
+// Renewal/upgrade order for existing customers (authenticated via hotspot session token)
+app.post("/api/portal/renew-order", async (c) => {
+  const limited = rateLimitPortalWrite(c);
+  if (limited) return limited;
+  try {
+    const body = await c.req.json();
+    const sessionToken = String(body.sessionToken || "");
+    const packageId = String(body.packageId || "");
+    const paymentMethod = String(body.paymentMethod || "");
+    const trxId = body.trxId ? String(body.trxId).toUpperCase().trim() : undefined;
+    const paymentFrom = body.paymentFrom ? String(body.paymentFrom).trim() : undefined;
+    const orgId = body.orgId || portalOrg(c);
+
+    if (!/^[0-9a-f]{64}$/.test(sessionToken)) return c.json({ error: "Session token required" }, 401);
+    if (!packageId) return c.json({ error: "Package ID required" }, 400);
+    if (!paymentMethod) return c.json({ error: "Payment method required" }, 400);
+    if (["bkash", "nagad", "rocket"].includes(paymentMethod) && (!trxId || !paymentFrom)) {
+      return c.json({ error: "Transaction ID এবং sender নম্বর দিন" }, 400);
+    }
+
+    // Resolve session → get phone
+    const redis = getRedis();
+    const enc = await redis.get(hotspotSessionRedisKey(sessionToken));
+    if (!enc) return c.json({ error: "Session expired or invalid" }, 401);
+    let phone: string;
+    try {
+      const j = JSON.parse(decryptText(enc)) as { phone?: string };
+      phone = String(j.phone || "");
+    } catch {
+      return c.json({ error: "Session corrupted" }, 401);
+    }
+    if (!phone) return c.json({ error: "Session invalid" }, 401);
+
+    const ctx = await createContext(c);
+
+    // Find customer
+    const [customer] = await ctx.db.select().from(customers)
+      .where(and(eq(customers.phone, phone), eq(customers.orgId, orgId))).limit(1);
+    if (!customer?.isActive) return c.json({ error: "Customer not found or inactive" }, 403);
+
+    // Find active package
+    const [pkg] = await ctx.db.select().from(packages)
+      .where(and(eq(packages.id, packageId), eq(packages.orgId, orgId), eq(packages.isActive, true))).limit(1);
+    if (!pkg) return c.json({ error: "প্যাকেজ পাওয়া যায়নি" }, 404);
+
+    // Validate unique TRX
+    if (trxId) {
+      const [existingTrx] = await ctx.db.select({ id: orders.id }).from(orders)
+        .where(and(eq(orders.orgId, orgId), eq(orders.paymentMethod, paymentMethod as any), eq(orders.trxId, trxId))).limit(1);
+      if (existingTrx) return c.json({ error: "Transaction ID already submitted" }, 409);
+    }
+
+    // Find latest subscription (will be renewed on approval — keep username/password)
+    const [existingSub] = await ctx.db.select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.customerId, customer.id), eq(subscriptions.orgId, orgId)))
+      .orderBy(desc(subscriptions.createdAt))
+      .limit(1);
+
+    // Create pending order with subscriptionId linked (so approval updates not creates)
+    const [order] = await ctx.db.insert(orders).values({
+      orgId, customerId: customer.id,
+      packageId, amountBdt: pkg.priceBdt,
+      paymentMethod: paymentMethod as any,
+      trxId: trxId ?? null,
+      paymentFrom: paymentFrom ?? null,
+      subscriptionId: existingSub?.id ?? null,
+      status: "pending",
+    }).returning({ id: orders.id });
+
+    await logActivity(ctx.db, orgId, undefined, "order.created", "order", order.id, {
+      amountBdt: pkg.priceBdt, paymentMethod, packageId, source: "renewal",
+    });
+
+    // Notify Telegram + admin socket
+    const [tgConfig] = await ctx.db.select().from(telegramConfigs)
+      .where(eq(telegramConfigs.orgId, orgId)).limit(1);
+    if (tgConfig) {
+      sendOrderNotification(tgConfig.chatId, { ...order, amountBdt: pkg.priceBdt, paymentMethod }, customer, pkg).catch(() => {});
+    }
+    emitOrgEvent(orgId, "order:new", {
+      orgId, orderId: order.id,
+      customerName: customer.fullName,
+      customerPhone: customer.phone ?? "",
+      amountBdt: pkg.priceBdt,
+      paymentMethod, trxId: trxId ?? undefined,
+    });
+
+    return c.json({ data: { orderId: order.id, phone, username: phone, customerName: customer.fullName } });
   } catch (error) {
     return portalError(c, error);
   }

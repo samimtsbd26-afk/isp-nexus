@@ -5,13 +5,15 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { orders, invoices, subscriptions, customers, packages, routers, telegramConfigs } from "@isp-nexus/db";
 import { encryptText, decryptText } from "../lib/crypto.js";
-import { getMikroTikClient } from "../services/mikrotik/client.js";
+import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
 import { logger } from "../lib/logger.js";
 import { sendApprovalNotification } from "../services/telegram/bot.js";
 import { nextInvoiceNumber, generateInvoicePdf } from "../services/billing/invoice.js";
-import { ensureHotspotProfile, syncHotspotRadiusUser } from "../services/hotspot/provisioning.js";
+import { ensureHotspotProfile, syncHotspotRadiusUser, syncHotspotDbUser } from "../services/hotspot/provisioning.js";
 import { sendPaymentSuccessSms } from "../services/sms/index.js";
-import { emitOrgEvent } from "../boot.js";
+import { emitOrgEvent, emitCustomerEvent } from "../boot.js";
+import { logActivity } from "../lib/activity.js";
+import { hotspotPlanComment, packageActivationDurationSeconds, packageLimitUptimeHours } from "@isp-nexus/shared";
 
 export const orderRouter = router({
   list: adminProcedure
@@ -82,14 +84,18 @@ export const orderRouter = router({
 
         if (!customer?.isActive) throw new TRPCError({ code: "BAD_REQUEST", message: "Customer is inactive" });
 
-        const validityDays = pkg.validityDays ?? 30;
-        const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
-        // For free trial orders, reuse the registration password stored in order metadata
+        const trialSeconds = packageActivationDurationSeconds(pkg);
+        const trialHours = packageLimitUptimeHours(pkg);
+        const expiresAt = new Date(Date.now() + trialSeconds * 1000);
+        const planComment = hotspotPlanComment(pkg);
+        // For free trial orders, reuse the registration password stored in order metadata.
+        // New orders use registrationMeta; old orders (pre-migration) fall back to screenshotUrl.
         let subPassword: string;
         let passwordEncrypted: string;
-        if (o.paymentMethod === "free" && o.screenshotUrl) {
+        const rawMeta = o.registrationMeta ?? o.screenshotUrl;
+        if (o.paymentMethod === "free" && rawMeta) {
           try {
-            const meta = JSON.parse(o.screenshotUrl) as { ep?: string };
+            const meta = JSON.parse(rawMeta) as { ep?: string };
             if (typeof meta.ep === "string" && meta.ep.split(":").length === 3) {
               passwordEncrypted = meta.ep;
               subPassword = decryptText(meta.ep);
@@ -109,11 +115,9 @@ export const orderRouter = router({
           if (pkg.type === "hotspot" && !pkg.mikrotikProfileName) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Router profile sync নেই" });
           }
-          const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-          const password = decryptText(r.passwordEncrypted);
-          let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+          let client: MikroTikApi | null = null;
           try {
-            client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+            client = await connectRouter(r);
             if (pkg.type === "pppoe") {
               await client.add("/ppp/secret", {
                 name: username, password: subPassword,
@@ -126,10 +130,11 @@ export const orderRouter = router({
                 name: username,
                 password: subPassword,
                 profile,
-                "limit-uptime": `${validityDays * 24}h`,
-                comment: o.paymentMethod === "free" ? `trial:${o.id}` : o.id,
+                "limit-uptime": `${trialHours}h`,
+                comment: planComment,
               });
-              await syncHotspotRadiusUser(ctx.db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
+              await syncHotspotRadiusUser(ctx.db, username, subPassword, pkg, trialSeconds);
+              await syncHotspotDbUser(ctx.db, ctx.orgId, r.id, username, subPassword, profile, planComment);
             }
           } catch (err) {
             logger.error({ err }, "MikroTik provision error in order approval");
@@ -144,20 +149,63 @@ export const orderRouter = router({
           routerId: r?.id ?? null, username, passwordEncrypted,
           expiresAt, status: "active",
         }).returning();
+        await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "subscription.created", "subscription", sub.id, { username, packageName: pkg.name, durationSeconds: trialSeconds });
 
         await ctx.db.update(orders).set({ subscriptionId: sub.id, updatedAt: new Date() }).where(eq(orders.id, o.id));
       } else {
-        const [subscription] = await ctx.db.select({ id: subscriptions.id }).from(subscriptions)
-          .where(and(eq(subscriptions.id, o.subscriptionId), eq(subscriptions.orgId, ctx.orgId))).limit(1);
-        if (!subscription) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription not found" });
-        await ctx.db.update(subscriptions).set({ status: "active", updatedAt: new Date() })
-          .where(and(eq(subscriptions.id, o.subscriptionId), eq(subscriptions.orgId, ctx.orgId)));
+        // Renewal/upgrade: update existing subscription with new package + extended expiry
+        const [existingSub] = await ctx.db.select().from(subscriptions)
+          .where(and(eq(subscriptions.id, o.subscriptionId!), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+        if (!existingSub) throw new TRPCError({ code: "NOT_FOUND", message: "Subscription not found" });
+
+        const renewSeconds = packageActivationDurationSeconds(pkg);
+        const expiresAt = new Date(Date.now() + renewSeconds * 1000);
+
+        await ctx.db.update(subscriptions).set({
+          packageId: pkg.id,
+          expiresAt,
+          status: "active",
+          updatedAt: new Date(),
+        }).where(and(eq(subscriptions.id, o.subscriptionId!), eq(subscriptions.orgId, ctx.orgId)));
+
+        await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "subscription.renewed", "subscription", o.subscriptionId!, {
+          packageName: pkg.name, durationSeconds: renewSeconds,
+        });
+
+        // Non-blocking: update MikroTik profile + RADIUS for hotspot packages
+        if (pkg.type === "hotspot" && pkg.mikrotikProfileName && existingSub.routerId) {
+          const [r] = await ctx.db.select().from(routers)
+            .where(and(eq(routers.id, existingSub.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
+          if (r) {
+            connectRouter(r).then(async (client) => {
+              try {
+                await ensureHotspotProfile(client, pkg.mikrotikProfileName!, pkg);
+                const hsUsers = await client.print("/ip/hotspot/user", { name: existingSub.username });
+                if (hsUsers[0]?.id) {
+                  await client.exec("/ip/hotspot/user", "set", {
+                    numbers: hsUsers[0].id,
+                    profile: pkg.mikrotikProfileName!,
+                    comment: hotspotPlanComment(pkg),
+                  }).catch(() => {});
+                }
+                const subPassword = decryptText(existingSub.passwordEncrypted);
+                await syncHotspotRadiusUser(ctx.db, existingSub.username, subPassword, pkg, renewSeconds);
+                await syncHotspotDbUser(ctx.db, ctx.orgId, r.id, existingSub.username, subPassword, pkg.mikrotikProfileName!, hotspotPlanComment(pkg));
+              } catch (err) {
+                logger.warn({ err }, "MikroTik profile update failed in renewal — non-blocking");
+              } finally {
+                await client.close().catch(() => {});
+              }
+            }).catch((err) => logger.warn({ err }, "MikroTik connect failed in renewal"));
+          }
+        }
       }
 
       await ctx.db.update(orders).set({
         status: "approved", reviewedBy: ctx.user.id,
         reviewedAt: new Date(), reviewNote: input.note, updatedAt: new Date(),
       }).where(and(eq(orders.id, o.id), eq(orders.orgId, ctx.orgId)));
+      await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "order.approved", "order", o.id, { amountBdt: o.amountBdt, packageName: pkg.name, paymentMethod: o.paymentMethod });
 
       const invoiceNum = await nextInvoiceNumber(ctx.db, ctx.orgId);
       const [inv] = await ctx.db.insert(invoices).values({
@@ -165,6 +213,7 @@ export const orderRouter = router({
         customerId: o.customerId, amountBdt: o.amountBdt,
         taxBdt: 0, totalBdt: o.amountBdt, paidAt: new Date(),
       }).returning();
+      await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "payment.received", "invoice", inv.id, { orderId: o.id, amountBdt: o.amountBdt, paymentMethod: o.paymentMethod });
 
       const [customer] = await ctx.db.select().from(customers)
         .where(and(eq(customers.id, o.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
@@ -178,6 +227,13 @@ export const orderRouter = router({
         orgId: ctx.orgId,
         orderId: o.id,
         customerName: customer?.fullName ?? "Unknown",
+        amountBdt: o.amountBdt,
+        packageName: pkg.name,
+      });
+
+      emitCustomerEvent(o.customerId, "payment:paid", {
+        orderId: o.id,
+        invoiceId: inv.id,
         amountBdt: o.amountBdt,
         packageName: pkg.name,
       });
