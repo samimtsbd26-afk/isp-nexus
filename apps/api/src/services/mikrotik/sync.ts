@@ -2,8 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { createDb } from "@isp-nexus/db";
 import { env } from "../../lib/env.js";
 import { routers, hotspotUsers, pppoeUsers } from "@isp-nexus/db";
-import { decryptText } from "../../lib/crypto.js";
-import { getMikroTikClient } from "./client.js";
+import { connectRouter, type MikroTikApi } from "../../lib/mikrotik.js";
 import { logger } from "../../lib/logger.js";
 
 const db = createDb(env.DATABASE_URL);
@@ -12,12 +11,10 @@ export async function syncHotspotUsersFromMikroTik() {
   const allRouters = await db.select().from(routers).where(eq(routers.isActive, true));
   
   for (const r of allRouters) {
-    let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+    let client: MikroTikApi | null = null;
     try {
-      const password = decryptText(r.passwordEncrypted);
-      const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-      client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
-      
+      client = await connectRouter(r);
+
       const users = await client.print("/ip/hotspot/user");
       const activeSessions = await client.print("/ip/hotspot/active").catch(() => []);
       const activeNames = new Set(activeSessions.map((a: any) => a.user || a.name));
@@ -32,7 +29,7 @@ export async function syncHotspotUsersFromMikroTik() {
         const data = {
           orgId: r.orgId,
           routerId: r.id,
-          mikrotikId: u[".id"] || null,
+          mikrotikId: u.id || null,
           name,
           password: u.password || null,
           profile: u.profile || null,
@@ -76,12 +73,10 @@ export async function syncPppoeUsersFromMikroTik() {
   const allRouters = await db.select().from(routers).where(eq(routers.isActive, true));
   
   for (const r of allRouters) {
-    let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+    let client: MikroTikApi | null = null;
     try {
-      const password = decryptText(r.passwordEncrypted);
-      const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-      client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
-      
+      client = await connectRouter(r);
+
       const users = await client.print("/ppp/secret");
       const activeSessions = await client.print("/ppp/active").catch(() => []);
       const activeNames = new Set(activeSessions.map((a: any) => a.name));
@@ -96,7 +91,7 @@ export async function syncPppoeUsersFromMikroTik() {
         const data = {
           orgId: r.orgId,
           routerId: r.id,
-          mikrotikId: u[".id"] || null,
+          mikrotikId: u.id || null,
           name,
           password: u.password || null,
           service: u.service || "pppoe",

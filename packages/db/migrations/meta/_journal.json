@@ -8,6 +8,69 @@
       "when": 1778187923413,
       "tag": "0000_jittery_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778265326745,
+      "tag": "0001_right_bushwacker",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778340000000,
+      "tag": "0002_package_duration_unit",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1747094400000,
+      "tag": "0003_app_settings_encrypted",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1747094460000,
+      "tag": "0004_virtual_hosts",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1747094520000,
+      "tag": "0005_wireguard_private_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1747094580000,
+      "tag": "0006_radius_nas_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1747094640000,
+      "tag": "0007_vps_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1747180800000,
+      "tag": "0008_router_provisioning",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1747181400000,
+      "tag": "0009_radacct_pppoe_accounting_fix",
+      "breakpoints": true
     }
   ]
 }

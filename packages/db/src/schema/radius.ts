@@ -1,4 +1,4 @@
-import { pgTable, serial, bigserial, varchar, text, integer, timestamp, bigint } from "drizzle-orm/pg-core";
+import { pgTable, serial, bigserial, varchar, text, integer, timestamp, bigint, boolean } from "drizzle-orm/pg-core";
 
 export const radcheck = pgTable("radcheck", {
   id: serial("id").primaryKey(),
@@ -68,4 +68,17 @@ export const radacct = pgTable("radacct", {
   framedipv6prefix: varchar("framedipv6prefix", { length: 45 }).notNull().default(""),
   framedinterfaceid: varchar("framedinterfaceid", { length: 44 }).notNull().default(""),
   delegatedipv6prefix: varchar("delegatedipv6prefix", { length: 45 }).notNull().default(""),
+});
+
+/** FreeRADIUS NAS / client table — read by FreeRADIUS via `client_table = "nas"` in sql.conf */
+export const nas = pgTable("nas", {
+  id: serial("id").primaryKey(),
+  nasname: varchar("nasname", { length: 128 }).notNull(),
+  shortname: varchar("shortname", { length: 32 }),
+  type: varchar("type", { length: 30 }).default("other"),
+  ports: integer("ports"),
+  secret: varchar("secret", { length: 60 }).notNull().default("secret"),
+  server: varchar("server", { length: 64 }),
+  community: varchar("community", { length: 50 }),
+  description: varchar("description", { length: 200 }).default("RADIUS Client"),
 });

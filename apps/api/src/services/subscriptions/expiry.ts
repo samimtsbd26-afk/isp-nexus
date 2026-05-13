@@ -1,9 +1,8 @@
 import { and, eq, gte, lte, isNull } from "drizzle-orm";
 import { createDb, customers, packages, routers, subscriptions, telegramConfigs } from "@isp-nexus/db";
 import { env } from "../../lib/env.js";
-import { decryptText } from "../../lib/crypto.js";
 import { logger } from "../../lib/logger.js";
-import { getMikroTikClient } from "../mikrotik/client.js";
+import { connectRouter } from "../../lib/mikrotik.js";
 import { logActivity } from "../../lib/activity.js";
 import { sendExpiryAlert } from "../telegram/bot.js";
 
@@ -52,26 +51,18 @@ export async function disableExpiredSubscriptions() {
 
       if (!router) throw new Error("Active router not found");
 
-      const port = router.useSsl ? (router.sslPort ?? 8729) : router.port;
-      const password = decryptText(router.passwordEncrypted);
-      const client = await getMikroTikClient({
-        host: router.host,
-        port,
-        username: router.username,
-        password,
-        useSsl: router.useSsl,
-      });
+      const client = await connectRouter(router);
 
       try {
         if (row.packageType === "pppoe") {
           const [secret] = await client.print("/ppp/secret", { name: row.username });
-          if (secret?.[".id"]) {
-            await client.exec("/ppp/secret", "set", { numbers: secret[".id"], disabled: "yes" });
+          if (secret?.id) {
+            await client.exec("/ppp/secret", "set", { numbers: secret.id, disabled: "yes" });
           }
         } else {
           const [user] = await client.print("/ip/hotspot/user", { name: row.username });
-          if (user?.[".id"]) {
-            await client.exec("/ip/hotspot/user", "set", { numbers: user[".id"], disabled: "yes" });
+          if (user?.id) {
+            await client.exec("/ip/hotspot/user", "set", { numbers: user.id, disabled: "yes" });
           }
         }
       } finally {
