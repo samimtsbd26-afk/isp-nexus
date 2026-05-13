@@ -156,7 +156,9 @@ app.post("/api/portal/hotspot-session", async (c) => {
     await caller.portal.login({ orgId, phone, password });
     const token = randomBytes(32).toString("hex");
     const payload = encryptText(JSON.stringify({ phone, password }));
-    await getRedis().set(hotspotSessionRedisKey(token), payload, "EX", HOTSPOT_SESSION_TTL_SEC);
+    const redis = getRedis();
+    await redis.set(hotspotSessionRedisKey(token), payload, "EX", HOTSPOT_SESSION_TTL_SEC);
+    await redis.set(`hotspot_phone_sess:${orgId}:${phone}`, token, "EX", HOTSPOT_SESSION_TTL_SEC);
     return c.json({ data: { sessionToken: token, expiresInSec: HOTSPOT_SESSION_TTL_SEC } });
   } catch (error) {
     return portalError(c, error);
