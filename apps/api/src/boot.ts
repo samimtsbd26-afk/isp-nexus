@@ -49,7 +49,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 const app = new Hono();
-const DEFAULT_PORTAL_ORG_ID = "212d7393-7375-4321-93f5-4789deb8b317";
+const DEFAULT_PORTAL_ORG_ID = process.env.PORTAL_ORG_ID || "8659360a-c017-45b4-bd9f-99106ef1ce3d";
 const HOTSPOT_ASSET_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../hotspot");
 const HOTSPOT_ASSET_EXTENSIONS = new Set([".html", ".css", ".js", ".png", ".webp", ".jpg", ".jpeg", ".svg"]);
 const portalWriteHits = new Map<string, { count: number; resetAt: number }>();

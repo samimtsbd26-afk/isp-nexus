@@ -1,6 +1,12 @@
 # ISP Nexus — Caddyfile
-# Domains: skynity.org
-# VPS: 46.202.166.89
+# Managed via Admin Panel → Settings → Domains (Caddy Admin API at caddy:2019)
+
+{
+    # Bind admin API to all interfaces so the api container can reach it.
+    # Port 2019 is NOT exposed to the host — internal Docker network only.
+    admin 0.0.0.0:2019
+    email {$SSL_EMAIL:admin@skynity.org}
+}
 
 admin.skynity.org {
     handle /api/* {
@@ -45,9 +51,6 @@ api.skynity.org {
     }
     reverse_proxy @ws api:3001
     reverse_proxy api:3001
-    header {
-        Access-Control-Allow-Origin "*"
-    }
 }
 
 wifi.skynity.org {
@@ -64,7 +67,56 @@ wifi.skynity.org {
 }
 
 hotspot.skynity.org {
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+
+    handle {
+        root * /srv/hotspot
+        @missing not file
+        rewrite @missing /login.html
+        file_server
+    }
+
+    encode gzip
+    header {
+        Cache-Control "no-store"
+    }
+}
+
+# MikroTik Captive Portal — wifi.skynity.cloud
+wifi.skynity.cloud {
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+
+    handle {
+        root * /srv/hotspot
+        @missing not file
+        rewrite @missing /login.html
+        file_server
+    }
+
+    encode gzip
+    header {
+        Cache-Control "no-store"
+    }
+}
+
+# MikroTik Hotspot — IP direct access (HTTP)
+:80 {
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+
     root * /srv/hotspot
+    # MikroTik redirect /login → /login.html
+    @login path /login
+    rewrite @login /login.html
+    # MikroTik redirect /login?dst=... → /login.html?dst=...
+    @loginQuery path_regexp login ^/login$
+    rewrite @loginQuery /login.html{uri}
+    try_files {path} {path}/ /login.html
     file_server
     encode gzip
     header {
@@ -72,15 +124,3 @@ hotspot.skynity.org {
     }
 }
 
-user.skynity.org {
-    handle /api/* {
-        reverse_proxy api:3001
-    }
-
-    reverse_proxy portal:3002
-    encode gzip
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options nosniff
-    }
-}
