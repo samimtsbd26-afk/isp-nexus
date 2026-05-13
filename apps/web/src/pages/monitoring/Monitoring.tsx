@@ -324,6 +324,7 @@ export default function Monitoring() {
   const [liveInterfaces, setLiveInterfaces] = useState<LiveInterface[]>([]);
   const [liveAlerts, setLiveAlerts] = useState<LiveAlert[]>([]);
   const [sessionHistory, setSessionHistory] = useState<Array<{ time: string; hotspot: number; pppoe: number; total: number }>>([]);
+  const [showAllInterfaces, setShowAllInterfaces] = useState(false);
 
   useEffect(() => setLayout(loadLayout(me?.id)), [me?.id]);
 
@@ -470,7 +471,13 @@ export default function Monitoring() {
       .sort((a, b) => b.rx + b.tx - (a.rx + a.tx));
   }, [bandwidthRows, latestBandwidthAt, liveInterfaces]);
 
-  const filteredInterfaces = latestInterfaces.filter((row) => row.name.toLowerCase().includes(search.toLowerCase()));
+  const cleanInterfaces = useMemo(
+    () => showAllInterfaces
+      ? latestInterfaces
+      : latestInterfaces.filter((row) => !/^lo\d*$/i.test(row.name)),
+    [latestInterfaces, showAllInterfaces],
+  );
+  const filteredInterfaces = cleanInterfaces.filter((row) => row.name.toLowerCase().includes(search.toLowerCase()));
   const wanRows = latestInterfaces.filter((row) => /wan|ether1|internet/i.test(row.name));
   const wireguardRows = latestInterfaces.filter((row) => /wg|wireguard/i.test(row.name));
   const hotspotRows = latestInterfaces.filter((row) => /hotspot/i.test(row.name));
@@ -603,10 +610,20 @@ export default function Monitoring() {
     },
     interfaces: {
       title: "Interface Traffic",
-      subtitle: `${filteredInterfaces.length}/${latestInterfaces.length} interfaces`,
+      subtitle: `${filteredInterfaces.length} visible · ${latestInterfaces.length} total`,
       render: () => (
         <div className="space-y-3">
           <TelemetryChart title="All Interface Throughput" data={trafficData} unit="K" height={180} lines={[{ key: "interfaces", name: "All interfaces", color: "#22d3ee" }, { key: "starlink", name: "Starlink", color: "#f59e0b" }]} />
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs text-muted-foreground">{filteredInterfaces.length} interfaces shown</span>
+            <button
+              type="button"
+              onClick={() => setShowAllInterfaces((v) => !v)}
+              className="text-xs text-primary hover:underline"
+            >
+              {showAllInterfaces ? "Hide loopback" : "Show all"}
+            </button>
+          </div>
           <div className="max-h-[320px] overflow-auto rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card text-xs uppercase tracking-wide text-muted-foreground">

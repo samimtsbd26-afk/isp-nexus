@@ -14,10 +14,32 @@ import {
   alertLogs,
   organizations,
 } from "@isp-nexus/db";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, gte } from "drizzle-orm";
 import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
 import { sendAlert } from "../services/telegram/bot.js";
 import { parseUptimeString } from "@isp-nexus/shared";
+
+const FALLBACK_PING_TARGETS = [
+  { target: "8.8.8.8", count: 4 },
+  { target: "1.1.1.1", count: 4 },
+] as const;
+
+const PING_FAILURE_THRESHOLD = 3;
+const pingFailureCount = new Map<string, number>();
+
+async function hasRecentAlert(
+  db: ReturnType<typeof createDb>,
+  routerId: string,
+  alertType: string,
+): Promise<boolean> {
+  const since = new Date(Date.now() - 10 * 60 * 1000);
+  const [row] = await db
+    .select({ id: alertLogs.id })
+    .from(alertLogs)
+    .where(and(eq(alertLogs.routerId, routerId), eq(alertLogs.alertType, alertType), gte(alertLogs.createdAt, since)))
+    .limit(1);
+  return !!row;
+}
 
 function getQueueConnection() {
   return { connection: getBullRedis() };
@@ -171,25 +193,45 @@ export function startMonitoringWorker(): Worker {
           }
         }
 
-        const targets = await db.select().from(pingTargets)
+        const userTargets = await db.select().from(pingTargets)
           .where(and(eq(pingTargets.routerId, r.id), eq(pingTargets.isActive, true)));
-        for (const target of targets) {
+        const pingList: Array<{ target: string; count: number }> = userTargets.length > 0
+          ? userTargets.map((t) => ({ target: t.target, count: t.count }))
+          : FALLBACK_PING_TARGETS.map((t) => ({ ...t }));
+
+        for (const pt of pingList) {
           try {
-            const rows = await client.exec("/", "ping", { address: target.target, count: String(target.count) });
+            const rows = await client.exec("/", "ping", { address: pt.target, count: String(pt.count) });
             const summary = parsePingSummary(rows);
-            await db.insert(pingSnapshots).values({
-              routerId: r.id,
-              targetHost: target.target,
-              ...summary,
-            });
+            await db.insert(pingSnapshots).values({ routerId: r.id, targetHost: pt.target, ...summary });
+            const key = `${r.id}:${pt.target}`;
+            if ((summary.packetLossPct ?? 0) >= 100) {
+              const failures = (pingFailureCount.get(key) ?? 0) + 1;
+              pingFailureCount.set(key, failures);
+              if (failures >= PING_FAILURE_THRESHOLD && !(await hasRecentAlert(db, r.id, "ping_loss"))) {
+                const msg = `🔴 *PING FAIL* on *${r.name}*\nTarget ${pt.target} unreachable (${failures} consecutive failures)`;
+                const [tgCfg] = await db.select().from(telegramConfigs)
+                  .where(and(eq(telegramConfigs.orgId, r.orgId), eq(telegramConfigs.alertsEnabled, true))).limit(1);
+                if (tgCfg) await sendAlert(tgCfg.chatId, msg).catch(() => null);
+                await db.insert(alertLogs).values({
+                  orgId: r.orgId, routerId: r.id,
+                  alertType: "ping_loss", message: msg, severity: "critical",
+                });
+                emitMonitoring?.(`router:${r.id}`, "alert:new", {
+                  routerId: r.id, routerName: r.name, alertType: "ping_loss", message: msg, severity: "critical",
+                });
+              }
+            } else {
+              pingFailureCount.delete(`${r.id}:${pt.target}`);
+            }
           } catch (err) {
-            logger.warn({ err, routerId: r.id, target: target.target }, "Ping target fetch failed");
+            logger.warn({ err, routerId: r.id, target: pt.target }, "Ping target fetch failed");
           }
         }
         logger.info({
           routerId: r.id,
           interfaces: liveInterfaces.map((iface) => iface.name),
-          pingTargets: targets.length,
+          pingTargets: pingList.length,
         }, "Monitoring snapshots inserted and emitted");
       } catch (err) {
         logger.warn({ err, routerId: r.id }, "Monitoring job failed for router");
@@ -210,6 +252,7 @@ export function startAlertsWorker(): Worker {
         : [];
       if (!r) continue;
       if (r.cpuLoad && r.cpuLoad > cfg.cpuThreshold) {
+        if (await hasRecentAlert(db, r.id, "cpu")) continue;
         const msg = `⚠️ *HIGH CPU* on *${r.name}*\nCPU: ${r.cpuLoad}% (threshold: ${cfg.cpuThreshold}%)`;
         await sendAlert(cfg.chatId, msg);
         await db.insert(alertLogs).values({
