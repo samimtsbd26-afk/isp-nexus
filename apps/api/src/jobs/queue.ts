@@ -14,9 +14,10 @@ import {
   alertLogs,
   organizations,
 } from "@isp-nexus/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
 import { sendAlert } from "../services/telegram/bot.js";
+import { parseUptimeString } from "@isp-nexus/shared";
 
 function getQueueConnection() {
   return { connection: getBullRedis() };
@@ -96,14 +97,14 @@ export function startMonitoringWorker(): Worker {
         const cpuLoad = integerFrom(res?.["cpu-load"] ?? res?.cpuLoad);
         const tempC = numberFrom(health?.temperature);
         const voltV = numberFrom(health?.voltage);
-        const uptime = integerFrom(res?.["uptime-seconds"] ?? res?.uptimeSeconds);
+        const uptime = parseUptimeString(res?.uptime ?? res?.["uptime-seconds"] ?? res?.uptimeSeconds);
 
         await db.insert(resourceSnapshots).values({
           routerId: r.id, cpuLoadPct: cpuLoad, freeMemoryMb: freeMemMb,
           totalMemoryMb: totalMemMb, temperatureC: tempC, voltageV: voltV, uptimeSeconds: uptime,
         });
 
-        await db.update(routers).set({ cpuLoad, freeMemoryMb: freeMemMb, temperatureCelsius: tempC, lastSeenAt: new Date() })
+        await db.update(routers).set({ cpuLoad, freeMemoryMb: freeMemMb, temperatureCelsius: tempC, uptimeSeconds: uptime, lastSeenAt: new Date() })
           .where(eq(routers.id, r.id));
 
         emitMonitoring?.(`router:${r.id}`, "resource:update", {
@@ -271,6 +272,17 @@ export function startSecurityWorker(): Worker {
   }, getQueueConnection());
 }
 
+export function startRetentionWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("retention", async (job) => {
+    logger.info({ jobId: job.id }, "Retention cleanup started");
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await db.delete(resourceSnapshots).where(lt(resourceSnapshots.capturedAt, cutoff));
+    await db.delete(bandwidthSnapshots).where(lt(bandwidthSnapshots.capturedAt, cutoff));
+    logger.info({ jobId: job.id, cutoff }, "Retention cleanup completed");
+  }, getQueueConnection());
+}
+
 export async function scheduleJobs(): Promise<void> {
   const monitoringQueue = getMonitoringQueue();
   const alertsQueue = getAlertsQueue();
@@ -278,6 +290,7 @@ export async function scheduleJobs(): Promise<void> {
   const syncQueue = new Queue("sync", getQueueConnection());
   const securityQueue = new Queue("security", getQueueConnection());
   const warningQueue = new Queue("warnings", getQueueConnection());
+  const retentionQueue = new Queue("retention", getQueueConnection());
   try {
     await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
     await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
@@ -285,6 +298,7 @@ export async function scheduleJobs(): Promise<void> {
     await warningQueue.add("warn", {}, { repeat: { every: 60 * 60 * 1000 } }); // 1 hour
     await syncQueue.add("sync", {}, { repeat: { every: 5 * 60 * 1000 } }); // 5 min
     await securityQueue.add("check", {}, { repeat: { every: 10 * 60 * 1000 } }); // 10 min
+    await retentionQueue.add("cleanup", {}, { repeat: { every: 6 * 60 * 60 * 1000 } }); // 6 hours
   } finally {
     await monitoringQueue.close();
     await alertsQueue.close();
@@ -292,6 +306,7 @@ export async function scheduleJobs(): Promise<void> {
     await warningQueue.close();
     await syncQueue.close();
     await securityQueue.close();
+    await retentionQueue.close();
   }
   logger.info("BullMQ jobs scheduled");
 }

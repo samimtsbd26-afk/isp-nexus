@@ -2,18 +2,9 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { eq, and } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { hotspotTemplates, routers, hotspotUsers } from "@isp-nexus/db";
-import { decryptText } from "../lib/crypto.js";
-import { getMikroTikClient, type MikroTikApi } from "../services/mikrotik/client.js";
-
-async function getRouterClient(db: any, orgId: string, routerId: string): Promise<MikroTikApi> {
-  const [r] = await db.select().from(routers)
-    .where(and(eq(routers.id, routerId), eq(routers.orgId, orgId))).limit(1);
-  if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
-  const password = decryptText(r.passwordEncrypted);
-  const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-  return getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
-}
+import { routers, hotspotUsers } from "@isp-nexus/db";
+import { getRouterClient } from "../lib/mikrotik.js";
+import { parseUptimeString } from "@isp-nexus/shared";
 
 const routerIdInput = z.object({ routerId: z.string().uuid() });
 const SHARED_POOL_MBPS = 450;
@@ -92,7 +83,16 @@ export const mikrotikRouter = router({
     try {
       const users = await client.print("/ppp/secret", { name: input.name });
       const user = users[0];
-      if (user?.[".id"]) await client.remove("/ppp/secret", user[".id"]);
+      if (user?.id) await client.remove("/ppp/secret", user.id);
+      return { ok: true };
+    } finally { await client.close(); }
+  }),
+
+  forceDisconnectPppoe: adminProcedure.input(z.object({ routerId: z.string().uuid(), name: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try {
+      const actives = await client.print("/ppp/active", { name: input.name });
+      for (const a of actives) if (a?.id) await client.remove("/ppp/active", a.id);
       return { ok: true };
     } finally { await client.close(); }
   }),
@@ -134,8 +134,8 @@ export const mikrotikRouter = router({
       try {
         const actives = await client.print("/ip/hotspot/active", { user: name });
         for (const a of actives) {
-          if (a?.[".id"]) {
-            await client.remove("/ip/hotspot/active", a[".id"]);
+          if (a?.id) {
+            await client.remove("/ip/hotspot/active", a.id);
             logs.push("active removed");
           }
         }
@@ -145,8 +145,8 @@ export const mikrotikRouter = router({
       try {
         const cookies = await client.print("/ip/hotspot/cookie", { user: name });
         for (const c of cookies) {
-          if (c?.[".id"]) {
-            await client.remove("/ip/hotspot/cookie", c[".id"]);
+          if (c?.id) {
+            await client.remove("/ip/hotspot/cookie", c.id);
             logs.push("cookie removed");
           }
         }
@@ -156,8 +156,8 @@ export const mikrotikRouter = router({
       try {
         const hosts = await client.print("/ip/hotspot/host", { user: name });
         for (const h of hosts) {
-          if (h?.[".id"]) {
-            await client.remove("/ip/hotspot/host", h[".id"]);
+          if (h?.id) {
+            await client.remove("/ip/hotspot/host", h.id);
             logs.push("host removed");
           }
         }
@@ -167,8 +167,8 @@ export const mikrotikRouter = router({
       try {
         const bindings = await client.print("/ip/hotspot/ip-binding", { comment: name });
         for (const b of bindings) {
-          if (b?.[".id"]) {
-            await client.remove("/ip/hotspot/ip-binding", b[".id"]);
+          if (b?.id) {
+            await client.remove("/ip/hotspot/ip-binding", b.id);
             logs.push("binding removed");
           }
         }
@@ -178,8 +178,8 @@ export const mikrotikRouter = router({
       try {
         const users = await client.print("/ip/hotspot/user", { name });
         const user = users[0];
-        if (user?.[".id"]) {
-          await client.remove("/ip/hotspot/user", user[".id"]);
+        if (user?.id) {
+          await client.remove("/ip/hotspot/user", user.id);
           logs.push("user removed");
         }
       } catch { /* ignore if not found */ }
@@ -192,6 +192,19 @@ export const mikrotikRouter = router({
       } catch { /* ignore if not found */ }
 
       return { ok: true, logs };
+    } finally { await client.close(); }
+  }),
+
+  forceDisconnectHotspot: adminProcedure.input(z.object({ routerId: z.string().uuid(), name: z.string() })).mutation(async ({ ctx, input }) => {
+    const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
+    try {
+      const actives = await client.print("/ip/hotspot/active", { user: input.name });
+      for (const a of actives) if (a?.id) await client.remove("/ip/hotspot/active", a.id);
+      const cookies = await client.print("/ip/hotspot/cookie", { user: input.name });
+      for (const c of cookies) if (c?.id) await client.remove("/ip/hotspot/cookie", c.id);
+      const hosts = await client.print("/ip/hotspot/host", { user: input.name });
+      for (const h of hosts) if (h?.id) await client.remove("/ip/hotspot/host", h.id);
+      return { ok: true };
     } finally { await client.close(); }
   }),
 
@@ -451,16 +464,31 @@ export const mikrotikRouter = router({
   getLiveStats: authedProcedure.input(routerIdInput).query(async ({ ctx, input }) => {
     const client = await getRouterClient(ctx.db, ctx.orgId, input.routerId);
     try {
-      const [identity] = await client.print("/system/identity");
-      const [resource] = await client.print("/system/resource");
-      const interfaces = await client.print("/interface");
-      const activePppoe = await client.print("/ppp/active");
-      const activeHotspot = await client.print("/ip/hotspot/active");
-      const hotspotUsers = await client.print("/ip/hotspot/user");
-      const queues = await client.print("/queue/simple");
-      const queueTree = await client.print("/queue/tree");
-      const firewallFilter = await client.print("/ip/firewall/filter");
-      const routes = await client.print("/ip/route");
+      const [
+        [identity],
+        [resource],
+        interfaces,
+        activePppoe,
+        activeHotspot,
+        hotspotUsers,
+        queues,
+        queueTree,
+        firewallFilter,
+        routes,
+        hotspotProfiles,
+      ] = await Promise.all([
+        client.print("/system/identity"),
+        client.print("/system/resource"),
+        client.print("/interface"),
+        client.print("/ppp/active"),
+        client.print("/ip/hotspot/active"),
+        client.print("/ip/hotspot/user"),
+        client.print("/queue/simple"),
+        client.print("/queue/tree"),
+        client.print("/ip/firewall/filter"),
+        client.print("/ip/route"),
+        client.print("/ip/hotspot/user/profile"),
+      ]);
 
       const runningIfaces = interfaces.filter((i: any) => i.running === "true" || i.running === true);
       const sharedQueues = queueTree.filter((q: any) => String(q.name ?? "").startsWith("skynity-shared-"));
@@ -474,7 +502,7 @@ export const mikrotikRouter = router({
         return acc;
       }, {});
       const burstProfiles = new Set(
-        (await client.print("/ip/hotspot/user/profile"))
+        hotspotProfiles
           .filter((profile: any) => String(profile.name ?? "").startsWith("skynity_") && String(profile.rateLimit ?? profile["rate-limit"] ?? "").split(" ").length > 1)
           .map((profile: any) => profile.name),
       );
@@ -484,6 +512,7 @@ export const mikrotikRouter = router({
         model: resource?.boardName ?? null,
         rosVersion: resource?.version ?? null,
         uptime: resource?.uptime ?? null,
+        uptimeSeconds: parseUptimeString(resource?.uptime),
         cpuLoad: resource?.cpuLoad ? Number(resource.cpuLoad) : null,
         totalMemoryMb: resource?.totalMemory ? Math.round(Number(resource.totalMemory) / 1024 / 1024) : null,
         freeMemoryMb: resource?.freeMemory ? Math.round(Number(resource.freeMemory) / 1024 / 1024) : null,
@@ -518,6 +547,24 @@ export const mikrotikRouter = router({
           type: i.type ?? "ether",
           rxByte: i.rxByte ? Number(i.rxByte) : 0,
           txByte: i.txByte ? Number(i.txByte) : 0,
+        })),
+        activeHotspotSessions: activeHotspot.map((s: any) => ({
+          ".id": s[".id"] ?? s.id ?? null,
+          user: s.user ?? s.name ?? s.username ?? null,
+          address: s.address ?? s["ip-address"] ?? null,
+          "mac-address": s["mac-address"] ?? null,
+          uptime: s.uptime ?? null,
+          "bytes-in": s["bytes-in"] ?? s.bytesIn ?? null,
+          "bytes-out": s["bytes-out"] ?? s.bytesOut ?? null,
+          profile: s.profile ?? null,
+        })),
+        activePppoeSessions: activePppoe.map((s: any) => ({
+          ".id": s[".id"] ?? s.id ?? null,
+          name: s.name ?? null,
+          address: s.address ?? null,
+          uptime: s.uptime ?? null,
+          "bytes-in": s["bytes-in"] ?? s.bytesIn ?? null,
+          "bytes-out": s["bytes-out"] ?? s.bytesOut ?? null,
         })),
       };
     } finally { await client.close(); }
