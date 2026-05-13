@@ -3,6 +3,7 @@ import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { Plus, RefreshCw, Trash2, UserCheck, UserX } from "lucide-react";
 import { Card, CardContent, Button, Input, Modal, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
+import { formatBytes } from "../lib/utils";
 
 const EMPTY = { name: "", password: "", profile: "default", comment: "" };
 
@@ -212,14 +213,4 @@ function sessionBytes(session: any): string {
   return total > 0 ? `${formatBytes(total)} (${formatBytes(incoming)} in / ${formatBytes(outgoing)} out)` : "—";
 }
 
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let amount = value;
-  let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) {
-    amount /= 1024;
-    unit += 1;
-  }
-  return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
+

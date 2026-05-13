@@ -30,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatBytes } from "../../lib/utils";
 
 const REFRESH_MS = 15_000;
 const SELECTED_ROUTER_KEY = "isp_monitoring_selected_router";
@@ -118,15 +119,6 @@ function formatBps(value: number | null | undefined) {
   if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(2)} Mbps`;
   if (bps >= 1_000) return `${(bps / 1_000).toFixed(0)} Kbps`;
   return `${bps} bps`;
-}
-
-function formatBytes(value: number | null | undefined) {
-  const bytes = Number(value || 0);
-  if (bytes >= 1_099_511_627_776) return `${(bytes / 1_099_511_627_776).toFixed(2)} TB`;
-  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(2)} GB`;
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${bytes} B`;
 }
 
 function hotspotSessionUser(session: any): string {

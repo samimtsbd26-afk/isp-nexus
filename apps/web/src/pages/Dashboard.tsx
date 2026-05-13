@@ -11,20 +11,13 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, StatCard, Badge } from "../components/ui/index";
 import { Link } from "react-router";
+import { formatBytes } from "../lib/utils";
 
 const PIE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#06b6d4"];
 const DOT_CLASSES = [
   "bg-blue-500", "bg-emerald-500", "bg-amber-500",
   "bg-violet-500", "bg-red-500", "bg-cyan-500",
 ];
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
-}
 
 function formatMbps(value: number | undefined | null): string {
   return `${Number(value ?? 0).toLocaleString(undefined, { maximumFractionDigits: 1 })} Mbps`;
@@ -171,7 +164,7 @@ export default function Dashboard() {
       </div>
 
       {/* Network Health Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="rounded-xl border border-border bg-card p-4 flex items-center gap-3">
           <div className="p-2 rounded-lg bg-emerald-500/10">
             <CheckCircle2 size={18} className="text-emerald-400" />
