@@ -8,9 +8,11 @@
     "dev": "turbo run dev",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "db:generate": "turbo run db:generate",
-    "db:migrate": "turbo run db:migrate",
-    "db:seed": "turbo run db:seed",
+    "db:generate": "turbo run db:generate --filter=@isp-nexus/db",
+    "db:migrate": "turbo run db:migrate --filter=@isp-nexus/db",
+    "db:seed": "turbo run db:seed --filter=@isp-nexus/db",
+    "env:ensure": "node scripts/ensure-env-from-example.mjs",
+    "env:check": "node scripts/check-production-env.mjs --strict",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\""
   },
   "devDependencies": {
