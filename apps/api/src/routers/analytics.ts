@@ -1,6 +1,6 @@
-import { sql, eq, gte, and, isNull } from "drizzle-orm";
-import { router, authedProcedure } from "../middleware.js";
-import { orders, customers, subscriptions, packages, routers } from "@isp-nexus/db";
+import { sql, eq, gte, lte, and, isNull, isNotNull } from "drizzle-orm";
+import { router, authedProcedure, adminProcedure } from "../middleware.js";
+import { orders, customers, subscriptions, packages, routers, invoices, resellers, resellerCommissions } from "@isp-nexus/db";
 import { connectRouter } from "../lib/mikrotik.js";
 import { logger } from "../lib/logger.js";
 
@@ -175,6 +175,122 @@ export const analyticsRouter = router({
       .groupBy(packages.id, packages.name, packages.type)
       .orderBy(sql`count(*) desc`)
       .limit(10);
+  }),
+
+  // ── Business metrics — MRR / ARPU / Churn / Unpaid / Reseller payouts ──────
+  businessMetrics: adminProcedure.query(async ({ ctx }) => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+
+    // MRR — paid orders this month (exclude free trials)
+    const [mrrRow] = await ctx.db
+      .select({ total: sql<number>`coalesce(sum(amount_bdt), 0)` })
+      .from(orders)
+      .where(and(
+        eq(orders.orgId, ctx.orgId),
+        eq(orders.status, "approved"),
+        gte(orders.createdAt, monthStart),
+        sql`amount_bdt > 0`,
+      ));
+    const mrr = Number(mrrRow?.total ?? 0);
+
+    // Prev-month MRR for growth %
+    const [prevMrrRow] = await ctx.db
+      .select({ total: sql<number>`coalesce(sum(amount_bdt), 0)` })
+      .from(orders)
+      .where(and(
+        eq(orders.orgId, ctx.orgId),
+        eq(orders.status, "approved"),
+        gte(orders.createdAt, prevMonthStart),
+        lte(orders.createdAt, prevMonthEnd),
+        sql`amount_bdt > 0`,
+      ));
+    const prevMrr = Number(prevMrrRow?.total ?? 0);
+    const mrrGrowthPct = prevMrr > 0 ? Math.round(((mrr - prevMrr) / prevMrr) * 100) : null;
+
+    // Active subscribers
+    const [activeSubs] = await ctx.db
+      .select({ count: sql<number>`count(*)` })
+      .from(subscriptions)
+      .where(and(eq(subscriptions.orgId, ctx.orgId), eq(subscriptions.status, "active")));
+    const activeCount = Number(activeSubs?.count ?? 0);
+
+    // ARPU
+    const arpu = activeCount > 0 ? Math.round(mrr / activeCount) : 0;
+
+    // Churn rate — subs that expired or were cancelled this month
+    const [churnedRow] = await ctx.db
+      .select({ count: sql<number>`count(*)` })
+      .from(subscriptions)
+      .where(and(
+        eq(subscriptions.orgId, ctx.orgId),
+        sql`status IN ('expired', 'cancelled')`,
+        gte(subscriptions.updatedAt, monthStart),
+      ));
+    const churned = Number(churnedRow?.count ?? 0);
+    const churnBase = activeCount + churned;
+    const churnRatePct = churnBase > 0 ? Math.round((churned / churnBase) * 100 * 10) / 10 : 0;
+
+    // Unpaid invoices — issued but paidAt is null
+    const unpaidRows = await ctx.db
+      .select({
+        id: invoices.id,
+        invoiceNumber: invoices.invoiceNumber,
+        amountBdt: invoices.totalBdt,
+        issuedAt: invoices.issuedAt,
+        dueAt: invoices.dueAt,
+        customerName: customers.fullName,
+        customerPhone: customers.phone,
+      })
+      .from(invoices)
+      .innerJoin(customers, eq(invoices.customerId, customers.id))
+      .where(and(
+        eq(invoices.orgId, ctx.orgId),
+        isNull(invoices.paidAt),
+        sql`invoices.amount_bdt > 0`,
+      ))
+      .orderBy(sql`invoices.issued_at desc`)
+      .limit(50);
+
+    const unpaidTotal = unpaidRows.reduce((s, r) => s + (r.amountBdt ?? 0), 0);
+
+    // Reseller payout summary — pending commissions per reseller
+    const resellerPayouts = await ctx.db
+      .select({
+        resellerId: resellers.id,
+        name: resellers.name,
+        phone: resellers.phone,
+        commissionPct: resellers.commissionPct,
+        walletBalanceBdt: resellers.walletBalanceBdt,
+        pendingBdt: sql<number>`coalesce(sum(case when rc.status='pending' then rc.amount_bdt else 0 end), 0)`,
+        totalEarnedBdt: sql<number>`coalesce(sum(rc.amount_bdt), 0)`,
+      })
+      .from(resellers)
+      .leftJoin(resellerCommissions, and(
+        eq(resellerCommissions.resellerId, resellers.id),
+        eq(resellerCommissions.orgId, ctx.orgId),
+      ))
+      .where(eq(resellers.orgId, ctx.orgId))
+      .groupBy(resellers.id, resellers.name, resellers.phone, resellers.commissionPct, resellers.walletBalanceBdt);
+
+    const totalPendingPayouts = resellerPayouts.reduce((s, r) => s + Number(r.pendingBdt ?? 0), 0);
+
+    return {
+      mrr,
+      prevMrr,
+      mrrGrowthPct,
+      arpu,
+      activeSubscribers: activeCount,
+      churnedThisMonth: churned,
+      churnRatePct,
+      unpaidInvoices: unpaidRows,
+      unpaidCount: unpaidRows.length,
+      unpaidTotalBdt: unpaidTotal,
+      resellerPayouts: resellerPayouts.map((r) => ({ ...r, pendingBdt: Number(r.pendingBdt), totalEarnedBdt: Number(r.totalEarnedBdt) })),
+      totalPendingPayoutsBdt: totalPendingPayouts,
+    };
   }),
 
   // ── Network map — all routers with live MikroTik stats ────────────────────

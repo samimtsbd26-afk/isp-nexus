@@ -538,4 +538,93 @@ export const settingsRouter = router({
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "delete", "incident_log", ctx.orgId, {});
     return { ok: true };
   }),
+
+  // ── SMS / notification templates ─────────────────────────────────────────
+  getSmsTemplates: adminProcedure.query(async ({ ctx }) => {
+    const raw = await getSetting(ctx.db, ctx.orgId, "sms_templates");
+    const defaults = {
+      welcome: "আসসালামু আলাইকুম {name}! ISP Nexus-এ স্বাগতম। আপনার ইন্টারনেট সংযোগ সক্রিয় হয়েছে। সাপোর্ট: {support_phone}",
+      paymentReminder: "প্রিয় {name}, আপনার {amount} টাকার পেমেন্ট বকেয়া আছে। দ্রুত পরিশোধ করুন অন্যথায় সংযোগ বিচ্ছিন্ন হবে। বিকাশ/নগদ: {bkash_number}",
+      expiryReminder: "প্রিয় {name}, আপনার ইন্টারনেট প্যাকেজ {days} দিনের মধ্যে মেয়াদ শেষ হবে। নবায়ন করতে কল করুন: {support_phone}",
+      expiryAlert: "প্রিয় {name}, আপনার ইন্টারনেট সংযোগের মেয়াদ আজ শেষ হয়েছে। নবায়নের জন্য: {support_phone}",
+      paymentSuccess: "প্রিয় {name}, আপনার {amount} টাকার পেমেন্ট সফলভাবে গ্রহণ হয়েছে। প্যাকেজ: {package_name}। ধন্যবাদ!",
+      supportReplyOpen: "প্রিয় {name}, আপনার সাপোর্ট টিকেট #{ticket_id} পেয়েছি। শীঘ্রই সমাধান করব। ধন্যবাদ।",
+      supportReplyClosed: "প্রিয় {name}, আপনার সমস্যা সমাধান হয়েছে (টিকেট #{ticket_id})। সন্তুষ্ট না হলে পুনরায় যোগাযোগ করুন।",
+      trialApproved: "আপনার ফ্রি ট্রায়াল অনুমোদন হয়েছে! Username: {username}, Password: {password}। WiFi নাম: {ssid}",
+    };
+    if (!raw) return defaults;
+    try { return { ...defaults, ...JSON.parse(raw) }; } catch { return defaults; }
+  }),
+
+  setSmsTemplates: adminProcedure
+    .input(z.object({
+      welcome: z.string().optional(),
+      paymentReminder: z.string().optional(),
+      expiryReminder: z.string().optional(),
+      expiryAlert: z.string().optional(),
+      paymentSuccess: z.string().optional(),
+      supportReplyOpen: z.string().optional(),
+      supportReplyClosed: z.string().optional(),
+      trialApproved: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = await getSetting(ctx.db, ctx.orgId, "sms_templates");
+      const current = existing ? JSON.parse(existing) : {};
+      const merged = { ...current, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) };
+      await setSetting(ctx.db, ctx.orgId, "sms_templates", JSON.stringify(merged));
+      invalidateSettingCache(ctx.orgId);
+      await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "update", "sms_templates", ctx.orgId, {});
+      return { ok: true };
+    }),
+
+  // ── Sales / commercial config ─────────────────────────────────────────────
+  getSalesConfig: adminProcedure.query(async ({ ctx }) => {
+    const raw = await getSetting(ctx.db, ctx.orgId, "sales_config");
+    const defaults = {
+      commissionModel: {
+        defaultPct: 10,
+        tiers: [
+          { minCustomers: 0,  pct: 10, label: "Standard" },
+          { minCustomers: 20, pct: 12, label: "Silver" },
+          { minCustomers: 50, pct: 15, label: "Gold" },
+          { minCustomers: 100, pct: 18, label: "Platinum" },
+        ],
+      },
+      voucherPricing: [
+        { durationHours: 1,  priceBdt: 10,  label: "1 ঘণ্টা" },
+        { durationHours: 3,  priceBdt: 20,  label: "3 ঘণ্টা" },
+        { durationHours: 12, priceBdt: 50,  label: "হাফ-ডে" },
+        { durationHours: 24, priceBdt: 80,  label: "১ দিন" },
+        { durationHours: 168, priceBdt: 400, label: "১ সপ্তাহ" },
+        { durationHours: 720, priceBdt: 1200, label: "১ মাস" },
+      ],
+      resellerOnboarding: [
+        "জাতীয় পরিচয়পত্র (NID) কপি সংগ্রহ",
+        "ব্যবসায়িক ঠিকানা যাচাই",
+        "বিকাশ/নগদ অ্যাকাউন্ট নম্বর নিবন্ধন",
+        "কমিশন চুক্তিপত্র স্বাক্ষর",
+        "অ্যাডমিন প্যানেলে রিসেলার অ্যাকাউন্ট তৈরি",
+        "প্রশিক্ষণ সেশন সম্পন্ন",
+        "প্রথম ৫ জন গ্রাহক অনবোর্ড করা",
+        "পেমেন্ট কালেকশন প্রক্রিয়া বোঝানো",
+      ],
+      packagePricingGuide: {
+        hotspot: { min: 30, max: 500, recommended: [30, 50, 100, 200, 500] },
+        pppoe: { min: 400, max: 5000, recommended: [400, 600, 800, 1200, 2000] },
+        margin: "কমপক্ষে ৩০% মার্জিন নিশ্চিত করুন",
+      },
+    };
+    if (!raw) return defaults;
+    try { return { ...defaults, ...JSON.parse(raw) }; } catch { return defaults; }
+  }),
+
+  setSalesConfig: adminProcedure
+    .input(z.object({ config: z.record(z.unknown()) }))
+    .mutation(async ({ ctx, input }) => {
+      const existing = await getSetting(ctx.db, ctx.orgId, "sales_config");
+      const current = existing ? JSON.parse(existing) : {};
+      await setSetting(ctx.db, ctx.orgId, "sales_config", JSON.stringify({ ...current, ...input.config }));
+      invalidateSettingCache(ctx.orgId);
+      return { ok: true };
+    }),
 });

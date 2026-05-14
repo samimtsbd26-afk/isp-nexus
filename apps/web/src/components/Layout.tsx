@@ -5,7 +5,7 @@ import {
   Bot, Shield, Antenna, HardDrive, LogOut, Menu, X,
   ChevronDown, ChevronRight, Globe, Layers, Key, ActivitySquare, Settings,
   ScanLine, ReceiptText, ScrollText, MessageCircleQuestion, AlertTriangle, Map,
-  UserCheck, CircleDollarSign, Zap, MonitorPlay,
+  UserCheck, CircleDollarSign, Zap, MonitorPlay, TrendingUp,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
@@ -69,6 +69,7 @@ const navSections: NavSection[] = [
     title: "Analytics",
     items: [
       { label: "NOC Wallboard", to: "/noc", icon: MonitorPlay },
+      { label: "Financial", to: "/finance", icon: TrendingUp },
       { label: "Telegram Bot", to: "/telegram", icon: Bot },
     ],
   },

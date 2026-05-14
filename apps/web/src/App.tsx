@@ -43,6 +43,7 @@ import Support from "./pages/Support";
 import Resellers from "./pages/Resellers";
 import BillingAutomation from "./pages/BillingAutomation";
 import Performance from "./pages/Performance";
+import FinancialDashboard from "./pages/FinancialDashboard";
 
 // Analytics & Tools
 import TelegramSettings from "./pages/Telegram";
@@ -168,6 +169,7 @@ export default function App() {
 
             {/* Analytics */}
             <Route path="analytics" element={<Navigate to="/" replace />} />
+            <Route path="finance" element={<FinancialDashboard />} />
             <Route path="telegram" element={<TelegramSettings />} />
 
             {/* System */}
