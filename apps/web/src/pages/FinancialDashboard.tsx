@@ -142,7 +142,7 @@ export default function FinancialDashboard() {
                   <tr key={r.resellerId} className="border-t hover:bg-muted/30">
                     <td className="p-3">
                       <div>{r.name}</div>
-                      <div className="text-xs text-muted-foreground">{r.phone}</div>
+                      <div className="text-xs text-muted-foreground">{r.email}</div>
                     </td>
                     <td className="p-3 text-right">{r.commissionPct}%</td>
                     <td className="p-3 text-right">{fmt(r.totalEarnedBdt)}</td>

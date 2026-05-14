@@ -1,6 +1,6 @@
-import { sql, eq, gte, lte, and, isNull, isNotNull } from "drizzle-orm";
+import { sql, eq, gte, lte, and, isNull } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
-import { orders, customers, subscriptions, packages, routers, invoices, resellers, resellerCommissions } from "@isp-nexus/db";
+import { orders, customers, subscriptions, packages, routers, invoices, resellers, resellerCommissions, users } from "@isp-nexus/db";
 import { connectRouter } from "../lib/mikrotik.js";
 import { logger } from "../lib/logger.js";
 
@@ -256,24 +256,25 @@ export const analyticsRouter = router({
 
     const unpaidTotal = unpaidRows.reduce((s, r) => s + (r.amountBdt ?? 0), 0);
 
-    // Reseller payout summary — pending commissions per reseller
+    // Reseller payout summary — pending commissions per reseller (join users for name/email)
     const resellerPayouts = await ctx.db
       .select({
         resellerId: resellers.id,
-        name: resellers.name,
-        phone: resellers.phone,
+        name: users.name,
+        email: users.email,
         commissionPct: resellers.commissionPct,
         walletBalanceBdt: resellers.walletBalanceBdt,
         pendingBdt: sql<number>`coalesce(sum(case when rc.status='pending' then rc.amount_bdt else 0 end), 0)`,
         totalEarnedBdt: sql<number>`coalesce(sum(rc.amount_bdt), 0)`,
       })
       .from(resellers)
+      .innerJoin(users, eq(users.id, resellers.userId))
       .leftJoin(resellerCommissions, and(
         eq(resellerCommissions.resellerId, resellers.id),
         eq(resellerCommissions.orgId, ctx.orgId),
       ))
       .where(eq(resellers.orgId, ctx.orgId))
-      .groupBy(resellers.id, resellers.name, resellers.phone, resellers.commissionPct, resellers.walletBalanceBdt);
+      .groupBy(resellers.id, users.name, users.email, resellers.commissionPct, resellers.walletBalanceBdt);
 
     const totalPendingPayouts = resellerPayouts.reduce((s, r) => s + Number(r.pendingBdt ?? 0), 0);
 
@@ -288,7 +289,7 @@ export const analyticsRouter = router({
       unpaidInvoices: unpaidRows,
       unpaidCount: unpaidRows.length,
       unpaidTotalBdt: unpaidTotal,
-      resellerPayouts: resellerPayouts.map((r) => ({ ...r, pendingBdt: Number(r.pendingBdt), totalEarnedBdt: Number(r.totalEarnedBdt) })),
+      resellerPayouts: resellerPayouts.map((r) => ({ resellerId: r.resellerId, name: r.name, email: r.email, commissionPct: r.commissionPct, walletBalanceBdt: r.walletBalanceBdt, pendingBdt: Number(r.pendingBdt), totalEarnedBdt: Number(r.totalEarnedBdt) })),
       totalPendingPayoutsBdt: totalPendingPayouts,
     };
   }),
