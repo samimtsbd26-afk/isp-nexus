@@ -112,7 +112,7 @@ export const portalRouter = router({
     return safe;
   }),
 
-  dashboard: portalAuthed.input(z.object({ token: z.string() })).query(async ({ ctx }) => {
+  dashboard: portalAuthed.input(z.object({ token: z.string() })).mutation(async ({ ctx }) => {
     const customer = (ctx as any).customer;
     const orgId = ctx.orgId as string;
     const subs = await ctx.db.select().from(subscriptions)
@@ -145,7 +145,7 @@ export const portalRouter = router({
       return { orderId: o.id };
     }),
 
-  myOrders: portalAuthed.input(z.object({ token: z.string() })).query(async ({ ctx }) => {
+  myOrders: portalAuthed.input(z.object({ token: z.string() })).mutation(async ({ ctx }) => {
     const customer = (ctx as any).customer;
     const orgId = ctx.orgId as string;
     return ctx.db.select().from(orders)
@@ -153,7 +153,7 @@ export const portalRouter = router({
       .orderBy(desc(orders.createdAt));
   }),
 
-  myInvoices: portalAuthed.input(z.object({ token: z.string() })).query(async ({ ctx }) => {
+  myInvoices: portalAuthed.input(z.object({ token: z.string() })).mutation(async ({ ctx }) => {
     const customer = (ctx as any).customer;
     const orgId = ctx.orgId as string;
     return ctx.db.select().from(invoices)
@@ -181,7 +181,7 @@ export const portalRouter = router({
         orgId, customerId: customer.id,
         subject: input.subject, status: "open", priority: "medium",
       }).returning({ id: supportTickets.id });
-      return { ticketId: ticket.id };
+      return { id: ticket.id, ticketId: ticket.id };
     }),
 
   publicPackages: publicProcedure
@@ -624,7 +624,7 @@ export const portalRouter = router({
 
   getDeviceBindings: portalAuthed
     .input(z.object({ token: z.string() }))
-    .query(async ({ ctx }) => {
+    .mutation(async ({ ctx }) => {
       const customer = (ctx as any).customer;
       const orgId = ctx.orgId as string;
       return ctx.db.select({
@@ -715,7 +715,7 @@ export const portalRouter = router({
 
   getActiveSession: portalAuthed
     .input(z.object({ token: z.string() }))
-    .query(async ({ ctx }) => {
+    .mutation(async ({ ctx }) => {
       const customer = (ctx as any).customer;
       const orgId = ctx.orgId as string;
       const [activeSub] = await ctx.db.select({ username: subscriptions.username }).from(subscriptions)
@@ -748,7 +748,7 @@ export const portalRouter = router({
 
   myTickets: portalAuthed
     .input(z.object({ token: z.string() }))
-    .query(async ({ ctx }) => {
+    .mutation(async ({ ctx }) => {
       const customer = (ctx as any).customer;
       const orgId = ctx.orgId as string;
       return ctx.db.select({
@@ -800,7 +800,7 @@ export const portalRouter = router({
 
   getNotifications: portalAuthed
     .input(z.object({ token: z.string() }))
-    .query(async ({ ctx }) => {
+    .mutation(async ({ ctx }) => {
       const customer = (ctx as any).customer;
       const orgId = ctx.orgId as string;
       const { getCustomerNotifications } = await import("../services/notifications/customer.js");

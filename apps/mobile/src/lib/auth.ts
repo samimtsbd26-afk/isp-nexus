@@ -147,10 +147,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "SET_BIOMETRIC", enabled: false });
   };
 
-  return (
-    <AuthContext.Provider value={{ ...state, login, logout, loginWithBiometric, enableBiometric, disableBiometric }}>
-      {children}
-    </AuthContext.Provider>
+  return React.createElement(
+    AuthContext.Provider,
+    { value: { ...state, login, logout, loginWithBiometric, enableBiometric, disableBiometric } },
+    children,
   );
 }
 
