@@ -264,8 +264,8 @@ export const analyticsRouter = router({
         email: users.email,
         commissionPct: resellers.commissionPct,
         walletBalanceBdt: resellers.walletBalanceBdt,
-        pendingBdt: sql<number>`coalesce(sum(case when rc.status='pending' then rc.amount_bdt else 0 end), 0)`,
-        totalEarnedBdt: sql<number>`coalesce(sum(rc.amount_bdt), 0)`,
+        pendingBdt: sql<number>`coalesce(sum(case when ${resellerCommissions.status}='pending' then ${resellerCommissions.amountBdt} else 0 end), 0)`,
+        totalEarnedBdt: sql<number>`coalesce(sum(${resellerCommissions.amountBdt}), 0)`,
       })
       .from(resellers)
       .innerJoin(users, eq(users.id, resellers.userId))
