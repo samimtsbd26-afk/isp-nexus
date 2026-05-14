@@ -1,3 +1,5 @@
+import { trpcDeserializeResultData, trpcSerializeWire } from "./trpc-http";
+
 const ACCESS_TOKEN_KEY = "isp_access_token";
 const AUTH_EVENT = "isp-auth-state";
 const CHUNK_RELOAD_KEY = "isp_chunk_retry";
@@ -40,11 +42,12 @@ export async function restoreSession(force = false): Promise<string | null> {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ json: null }),
+    body: trpcSerializeWire(undefined),
   })
     .then(async (response) => {
       const body = await response.json().catch(() => null);
-      const token = body?.result?.data?.json?.accessToken;
+      const token =
+        body?.result?.data !== undefined ? trpcDeserializeResultData<{ accessToken?: string }>(body.result.data).accessToken : undefined;
       if (!response.ok || !token) {
         clearAccessToken();
         return null;

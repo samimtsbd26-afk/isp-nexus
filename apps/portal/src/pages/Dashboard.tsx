@@ -3,8 +3,14 @@ import { useNavigate, Link } from "react-router";
 import {
   Wifi, WifiOff, Clock, Package, LogOut, RefreshCw,
   Zap, Calendar, TrendingUp, ChevronRight, Bell, User, ShoppingCart,
+  Smartphone, Shield, Activity, X, MessageCircle, Trash2,
 } from "lucide-react";
-import { api, type DashboardData, type Subscription, type Package as Pkg } from "../lib/api";
+import { toast } from "sonner";
+import {
+  api,
+  type DashboardData, type Subscription, type Package as Pkg,
+  type DeviceBinding, type ActiveSession, type PortalNotification,
+} from "../lib/api";
 
 // ── Countdown ─────────────────────────────────────────────────────────────────
 
@@ -177,6 +183,17 @@ function NoSubCard() {
   );
 }
 
+// ── Notification type icon ────────────────────────────────────────────────────
+
+function notifIcon(type: string) {
+  if (type.includes("approved")) return "✅";
+  if (type.includes("rejected")) return "❌";
+  if (type.includes("expir")) return "⏰";
+  if (type.includes("block")) return "🚫";
+  if (type.includes("login")) return "🔐";
+  return "📢";
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -184,6 +201,16 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Extended data
+  const [bindings, setBindings] = useState<DeviceBinding[]>([]);
+  const [session, setSession] = useState<ActiveSession | null>(null);
+  const [notifications, setNotifications] = useState<PortalNotification[]>([]);
+  const [showNotifs, setShowNotifs] = useState(false);
+  const [logoutingAll, setLogoutingAll] = useState(false);
+  const [resettingId, setResettingId] = useState<string | null>(null);
+
+  const unread = notifications.filter((n) => !n.isRead).length;
 
   const load = useCallback(async (showSpinner = true) => {
     const token = localStorage.getItem("isp_portal_token");
@@ -205,9 +232,66 @@ export default function Dashboard() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Load secondary data once logged in
+  useEffect(() => {
+    const token = localStorage.getItem("isp_portal_token");
+    if (!token) return;
+    api.getDeviceBindings(token).then(setBindings).catch(() => {});
+    api.getActiveSession(token).then(setSession).catch(() => {});
+    api.getNotifications(token).then(setNotifications).catch(() => {});
+  }, []);
+
   function logout() {
     localStorage.removeItem("isp_portal_token");
     navigate("/login");
+  }
+
+  async function logoutAll() {
+    const token = localStorage.getItem("isp_portal_token");
+    if (!token) return;
+    if (!globalThis.confirm("This will disconnect all your active sessions. Continue?")) return;
+    setLogoutingAll(true);
+    try {
+      await api.logoutAllSessions(token);
+      toast.success("All sessions logged out");
+      localStorage.removeItem("isp_portal_token");
+      navigate("/login");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Logout failed");
+    } finally {
+      setLogoutingAll(false);
+    }
+  }
+
+  async function resetDevice(bindingId: string) {
+    const token = localStorage.getItem("isp_portal_token");
+    if (!token) return;
+    setResettingId(bindingId);
+    try {
+      await api.resetDevice(token, bindingId);
+      toast.success("Device binding reset");
+      setBindings((prev) => prev.filter((b) => b.id !== bindingId));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResettingId(null);
+    }
+  }
+
+  function openNotifs() {
+    setShowNotifs(true);
+    const token = localStorage.getItem("isp_portal_token");
+    if (token && unread > 0) {
+      api.markNotificationsRead(token).then(() => {
+        setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+      }).catch(() => {});
+    }
+  }
+
+  function fmtBytes(b: number) {
+    if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`;
+    if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(1)} MB`;
+    return `${(b / 1024).toFixed(0)} KB`;
   }
 
   if (loading) {
@@ -247,6 +331,16 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Notification bell */}
+            <button onClick={openNotifs} title="Notifications"
+              className="relative w-8 h-8 rounded-lg glass flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+              <Bell size={14} />
+              {unread > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-cyan-500 text-white text-[9px] font-bold flex items-center justify-center">
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </button>
             <button onClick={() => void load(false)} disabled={refreshing} title="Refresh"
               className="w-8 h-8 rounded-lg glass flex items-center justify-center text-slate-400 hover:text-white transition-colors">
               <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} />
@@ -258,6 +352,42 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Notification panel */}
+        {showNotifs && (
+          <div className="glass-card rounded-2xl border border-cyan-500/20 animate-slide-up">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <Bell size={13} className="text-cyan-400" />
+                <p className="text-sm font-semibold text-white">Notifications</p>
+              </div>
+              <button onClick={() => setShowNotifs(false)}
+                className="text-slate-400 hover:text-white transition-colors">
+                <X size={14} />
+              </button>
+            </div>
+            {notifications.length === 0 ? (
+              <div className="px-4 py-6 text-center text-xs text-slate-400">No notifications yet</div>
+            ) : (
+              <div className="divide-y divide-white/5 max-h-72 overflow-y-auto">
+                {notifications.slice(0, 20).map((n) => (
+                  <div key={n.id} className={`px-4 py-3 ${!n.isRead ? "bg-cyan-500/5" : ""}`}>
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-base leading-none mt-0.5">{notifIcon(n.type)}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-white">{n.title}</p>
+                        <p className="text-xs text-slate-400 mt-0.5">{n.message}</p>
+                        <p className="text-[10px] text-slate-600 mt-1">
+                          {new Date(n.createdAt).toLocaleString("en-BD")}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Subscription card */}
         <div className="animate-slide-up">
           {activeSub
@@ -265,6 +395,34 @@ export default function Dashboard() {
             : <NoSubCard />
           }
         </div>
+
+        {/* Active Session */}
+        {session && (
+          <div className="glass rounded-xl p-4 border border-emerald-500/15 animate-slide-up">
+            <div className="flex items-center gap-2 mb-3">
+              <Activity size={13} className="text-emerald-400" />
+              <p className="text-xs font-semibold text-emerald-400">Active Session</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-[10px] text-slate-500">IP Address</p>
+                <p className="text-sm font-semibold text-white">{session.address}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500">Uptime</p>
+                <p className="text-sm font-semibold text-white">{session.uptime}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500">Downloaded</p>
+                <p className="text-sm font-semibold text-emerald-400">{fmtBytes(session.rxBytes)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500">Uploaded</p>
+                <p className="text-sm font-semibold text-blue-400">{fmtBytes(session.txBytes)}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Account info strip */}
         <div className="glass rounded-xl p-4 flex items-center gap-4 animate-slide-up delay-100">
@@ -280,6 +438,38 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+
+        {/* Device Bindings */}
+        {bindings.length > 0 && (
+          <div className="glass rounded-xl overflow-hidden border border-white/5 animate-fade-in">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+              <Smartphone size={13} className="text-slate-400" />
+              <p className="text-xs font-semibold text-slate-200">Device Bindings</p>
+            </div>
+            <div className="divide-y divide-white/5">
+              {bindings.map((b) => (
+                <div key={b.id} className="flex items-center justify-between px-4 py-3 gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-blue-500/15 flex items-center justify-center shrink-0">
+                      <Smartphone size={13} className="text-blue-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-white truncate">{b.macAddress ?? "—"}</p>
+                      <p className="text-[10px] text-slate-400">{b.ipAddress ?? b.description ?? "bound device"}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => resetDevice(b.id)}
+                    disabled={resettingId === b.id}
+                    className="flex items-center gap-1 text-[10px] text-red-400 hover:text-red-300 transition-colors shrink-0 disabled:opacity-50">
+                    <Trash2 size={11} />
+                    {resettingId === b.id ? "..." : "Reset"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Expired subscriptions */}
         {data.subscriptions.filter((s) => s.status === "expired").length > 0 && (
@@ -329,18 +519,30 @@ export default function Dashboard() {
         )}
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-2 animate-slide-up delay-300">
+        <div className="grid grid-cols-4 gap-2 animate-slide-up delay-300">
           {[
             { to: "/packages", icon: Package, label: "Packages", color: "text-cyan-400" },
             { to: "/orders", icon: ShoppingCart, label: "Orders", color: "text-blue-400" },
             { to: "/profile", icon: User, label: "Profile", color: "text-violet-400" },
+            { to: "/support", icon: MessageCircle, label: "Support", color: "text-emerald-400" },
           ].map(({ to, icon: Icon, label, color }) => (
             <Link key={to} to={to}
               className="glass rounded-xl p-3 flex flex-col items-center gap-2 hover:bg-white/5 transition-colors">
               <Icon size={18} className={color} />
-              <span className="text-xs text-slate-300">{label}</span>
+              <span className="text-[10px] text-slate-300">{label}</span>
             </Link>
           ))}
+        </div>
+
+        {/* Logout all sessions */}
+        <div className="flex justify-center animate-fade-in delay-300">
+          <button
+            onClick={() => void logoutAll()}
+            disabled={logoutingAll}
+            className="flex items-center gap-1.5 text-[11px] text-red-400/70 hover:text-red-400 transition-colors disabled:opacity-50">
+            <Shield size={11} />
+            {logoutingAll ? "Logging out..." : "Logout all sessions"}
+          </button>
         </div>
 
         {/* SKYNITY branding footer */}

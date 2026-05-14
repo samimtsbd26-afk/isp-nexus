@@ -53,16 +53,38 @@ async function removeMikroTikUser(db: any, routerId: string, username: string): 
   if (!r) return;
   const client = await connectRouter(r);
   try {
+    // Hotspot: active sessions
     const actives = await client.print("/ip/hotspot/active", { user: username }).catch(() => []);
     for (const a of actives) if (a?.id) await client.remove("/ip/hotspot/active", a.id).catch(() => {});
+    // Hotspot: cookies (remembered login)
+    const cookies = await client.print("/ip/hotspot/cookie", { user: username }).catch(() => []);
+    for (const c of cookies) if (c?.id) await client.remove("/ip/hotspot/cookie", c.id).catch(() => {});
+    // Hotspot: host entries
+    const hosts = await client.print("/ip/hotspot/host", { user: username }).catch(() => []);
+    for (const h of hosts) if (h?.id) await client.remove("/ip/hotspot/host", h.id).catch(() => {});
+    // Hotspot: ip-binding (provisioning sets comment = username)
+    const ipBindings = await client.print("/ip/hotspot/ip-binding", { comment: username }).catch(() => []);
+    for (const b of ipBindings) if (b?.id) await client.remove("/ip/hotspot/ip-binding", b.id).catch(() => {});
+    // Hotspot: user entry
     const hsUsers = await client.print("/ip/hotspot/user", { name: username }).catch(() => []);
     for (const u of hsUsers) if (u?.id) await client.remove("/ip/hotspot/user", u.id).catch(() => {});
+    // PPPoE: active sessions
     const pppActives = await client.print("/ppp/active", { name: username }).catch(() => []);
     for (const a of pppActives) if (a?.id) await client.remove("/ppp/active", a.id).catch(() => {});
+    // PPPoE: secrets
     const pppSecrets = await client.print("/ppp/secret", { name: username }).catch(() => []);
     for (const u of pppSecrets) if (u?.id) await client.remove("/ppp/secret", u.id).catch(() => {});
   } finally {
     await client.close().catch(() => {});
+  }
+}
+
+async function clearCustomerRedis(redis: any, orgId: string, phone: string): Promise<void> {
+  const phoneKey = `hotspot_phone_sess:${orgId}:${phone}`;
+  const token = await redis.get(phoneKey).catch(() => null);
+  if (token) {
+    await redis.del(`hotspot_sess:v1:${token}`).catch(() => {});
+    await redis.del(phoneKey).catch(() => {});
   }
 }
 
@@ -310,27 +332,35 @@ export const customerRouter = router({
   }),
 
   permanentDelete: adminProcedure.input(z.object({ id: z.string().uuid(), confirm: z.literal("PERMANENT_DELETE") })).mutation(async ({ ctx, input }) => {
-    const [customer] = await ctx.db.select({ id: customers.id, fullName: customers.fullName }).from(customers)
+    const [customer] = await ctx.db.select({ id: customers.id, fullName: customers.fullName, phone: customers.phone }).from(customers)
       .where(and(eq(customers.id, input.id), eq(customers.orgId, ctx.orgId))).limit(1);
     if (!customer) throw new TRPCError({ code: "NOT_FOUND" });
 
     const subs = await ctx.db.select().from(subscriptions).where(eq(subscriptions.customerId, input.id));
 
+    // Step 1: MikroTik cleanup outside tx — best-effort, fail-safe
     for (const sub of subs) {
-      // Remove from MikroTik and RADIUS before deleting DB records
       if (sub.routerId) {
         await removeMikroTikUser(ctx.db, sub.routerId, sub.username).catch(() => {});
       }
-      await deleteRadiusUser(ctx.db, sub.username).catch(() => {});
-      await ctx.db.delete(radacct).where(eq(radacct.username, sub.username)).catch(() => {});
-      await ctx.db.delete(hotspotUsers).where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, sub.username))).catch(() => {});
-      await ctx.db.delete(pppoeUsers).where(and(eq(pppoeUsers.orgId, ctx.orgId), eq(pppoeUsers.name, sub.username))).catch(() => {});
     }
 
-    await ctx.db.delete(orders).where(eq(orders.customerId, input.id));
-    await ctx.db.delete(subscriptions).where(eq(subscriptions.customerId, input.id));
-    await ctx.db.delete(deviceBindings).where(eq(deviceBindings.customerId, input.id)).catch(() => {});
-    await ctx.db.delete(customers).where(and(eq(customers.id, input.id), eq(customers.orgId, ctx.orgId)));
+    // Step 2: Atomic DB transaction
+    await ctx.db.transaction(async (tx: any) => {
+      for (const sub of subs) {
+        await deleteRadiusUser(tx, sub.username).catch(() => {});
+        await tx.delete(radacct).where(eq(radacct.username, sub.username)).catch(() => {});
+        await tx.delete(hotspotUsers).where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, sub.username)));
+        await tx.delete(pppoeUsers).where(and(eq(pppoeUsers.orgId, ctx.orgId), eq(pppoeUsers.name, sub.username)));
+      }
+      await tx.delete(orders).where(eq(orders.customerId, input.id));
+      await tx.delete(subscriptions).where(eq(subscriptions.customerId, input.id));
+      await tx.delete(deviceBindings).where(eq(deviceBindings.customerId, input.id)).catch(() => {});
+      await tx.delete(customers).where(and(eq(customers.id, input.id), eq(customers.orgId, ctx.orgId)));
+    });
+
+    // Step 3: Redis cleanup post-commit — best-effort
+    await clearCustomerRedis(ctx.redis, ctx.orgId, customer.phone).catch(() => {});
 
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "permanent_delete", "customer", input.id, { fullName: customer.fullName });
     return { ok: true };
@@ -808,25 +838,37 @@ export const customerRouter = router({
         .where(and(eq(subscriptions.id, input.subscriptionId), eq(subscriptions.orgId, ctx.orgId))).limit(1);
       if (!sub) throw new TRPCError({ code: "NOT_FOUND" });
 
-      if (sub.routerId) {
-        await removeMikroTikUser(ctx.db, sub.routerId, sub.username);
-      }
-      await deleteRadiusUser(ctx.db, sub.username).catch(() => {});
-      await ctx.db.delete(radacct).where(eq(radacct.username, sub.username)).catch(() => {});
-      await ctx.db.delete(hotspotUsers)
-        .where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, sub.username)))
-        .catch(() => {});
-      await ctx.db.delete(pppoeUsers)
-        .where(and(eq(pppoeUsers.orgId, ctx.orgId), eq(pppoeUsers.name, sub.username)))
-        .catch(() => {});
-      await ctx.db.delete(subscriptions).where(eq(subscriptions.id, sub.id));
+      const [cust] = await ctx.db.select({ phone: customers.phone })
+        .from(customers)
+        .where(and(eq(customers.id, sub.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
 
-      const [remaining] = await ctx.db.select({ count: sql<number>`count(*)` })
-        .from(subscriptions)
-        .where(eq(subscriptions.customerId, sub.customerId));
-      if (Number(remaining?.count) === 0) {
-        await ctx.db.delete(deviceBindings).where(eq(deviceBindings.customerId, sub.customerId)).catch(() => {});
-        await ctx.db.delete(customers).where(and(eq(customers.id, sub.customerId), eq(customers.orgId, ctx.orgId)));
+      // Step 1: MikroTik cleanup outside tx — best-effort, fail-safe
+      if (sub.routerId) {
+        await removeMikroTikUser(ctx.db, sub.routerId, sub.username).catch(() => {});
+      }
+
+      // Step 2: Atomic DB transaction
+      await ctx.db.transaction(async (tx: any) => {
+        await deleteRadiusUser(tx, sub.username).catch(() => {});
+        await tx.delete(radacct).where(eq(radacct.username, sub.username)).catch(() => {});
+        await tx.delete(hotspotUsers)
+          .where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, sub.username)));
+        await tx.delete(pppoeUsers)
+          .where(and(eq(pppoeUsers.orgId, ctx.orgId), eq(pppoeUsers.name, sub.username)));
+        await tx.delete(subscriptions).where(eq(subscriptions.id, sub.id));
+
+        const [remaining] = await tx.select({ count: sql<number>`count(*)` })
+          .from(subscriptions)
+          .where(eq(subscriptions.customerId, sub.customerId));
+        if (Number(remaining?.count) === 0) {
+          await tx.delete(deviceBindings).where(eq(deviceBindings.customerId, sub.customerId)).catch(() => {});
+          await tx.delete(customers).where(and(eq(customers.id, sub.customerId), eq(customers.orgId, ctx.orgId)));
+        }
+      });
+
+      // Step 3: Redis cleanup post-commit — best-effort
+      if (cust?.phone) {
+        await clearCustomerRedis(ctx.redis, ctx.orgId, cust.phone).catch(() => {});
       }
 
       await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "user.deleted", "subscription", sub.id, { username: sub.username });
@@ -876,5 +918,120 @@ export const customerRouter = router({
 
       await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "user.device_reset", "customer", input.customerId, { phone: customer.phone });
       return { ok: true };
+    }),
+
+  userBulkResetDevice: adminProcedure
+    .input(z.object({ customerIds: z.array(z.string().uuid()).min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      let success = 0;
+      for (const customerId of input.customerIds) {
+        const [customer] = await ctx.db.select({ phone: customers.phone, id: customers.id })
+          .from(customers)
+          .where(and(eq(customers.id, customerId), eq(customers.orgId, ctx.orgId))).limit(1);
+        if (!customer) continue;
+
+        const phoneKey = `hotspot_phone_sess:${ctx.orgId}:${customer.phone}`;
+        const token = await ctx.redis.get(phoneKey).catch(() => null);
+        if (token) {
+          await ctx.redis.del(`hotspot_sess:v1:${token}`).catch(() => {});
+          await ctx.redis.del(phoneKey).catch(() => {});
+        }
+        await ctx.db.delete(deviceBindings).where(eq(deviceBindings.customerId, customerId)).catch(() => {});
+
+        const activeHs = await ctx.db
+          .select({ routerId: hotspotUsers.routerId, name: hotspotUsers.name })
+          .from(hotspotUsers)
+          .where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, customer.phone), eq(hotspotUsers.isActive, true)))
+          .limit(1);
+        for (const hs of activeHs) {
+          if (!hs.routerId) continue;
+          try {
+            const client = await getRouterClient(ctx.db, ctx.orgId, hs.routerId);
+            try {
+              const actives = await client.print("/ip/hotspot/active", { user: hs.name });
+              for (const a of actives) if (a?.id) await client.remove("/ip/hotspot/active", a.id);
+              const cookies = await client.print("/ip/hotspot/cookie", { user: hs.name });
+              for (const co of cookies) if (co?.id) await client.remove("/ip/hotspot/cookie", co.id);
+              const hosts = await client.print("/ip/hotspot/host", { user: hs.name });
+              for (const h of hosts) if (h?.id) await client.remove("/ip/hotspot/host", h.id);
+            } finally { await client.close(); }
+          } catch (_) {}
+        }
+
+        await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "user.device_reset", "customer", customerId, { phone: customer.phone });
+        success++;
+      }
+      return { ok: true, count: success };
+    }),
+
+  userBulkBlock: adminProcedure
+    .input(z.object({ subscriptionIds: z.array(z.string().uuid()).min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      let success = 0;
+      for (const subscriptionId of input.subscriptionIds) {
+        const [sub] = await ctx.db.select().from(subscriptions)
+          .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+        if (!sub || sub.status === "suspended") continue;
+
+        await ctx.db.update(subscriptions)
+          .set({ status: "suspended", updatedAt: new Date() })
+          .where(eq(subscriptions.id, sub.id));
+
+        if (sub.routerId && sub.packageId) {
+          const [pkg] = await ctx.db.select().from(packages)
+            .where(and(eq(packages.id, sub.packageId), eq(packages.orgId, ctx.orgId))).limit(1);
+          await disableMikroTikUser(ctx.db, sub.routerId, sub.username, pkg?.type || "hotspot").catch(() => {});
+          await forceLogoutMikroTikUser(ctx.db, sub.routerId, sub.username, pkg?.type || "hotspot").catch(() => {});
+        }
+
+        await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "user.blocked", "subscription", sub.id, { type: "bulk" });
+        success++;
+      }
+      return { ok: true, count: success };
+    }),
+
+  userBulkDelete: adminProcedure
+    .input(z.object({ subscriptionIds: z.array(z.string().uuid()).min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      let success = 0;
+      for (const subscriptionId of input.subscriptionIds) {
+        const [sub] = await ctx.db.select().from(subscriptions)
+          .where(and(eq(subscriptions.id, subscriptionId), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+        if (!sub) continue;
+
+        const [cust] = await ctx.db.select({ phone: customers.phone })
+          .from(customers)
+          .where(and(eq(customers.id, sub.customerId), eq(customers.orgId, ctx.orgId))).limit(1);
+
+        if (sub.routerId) {
+          await removeMikroTikUser(ctx.db, sub.routerId, sub.username).catch(() => {});
+        }
+
+        await ctx.db.transaction(async (tx: any) => {
+          await deleteRadiusUser(tx, sub.username).catch(() => {});
+          await tx.delete(radacct).where(eq(radacct.username, sub.username)).catch(() => {});
+          await tx.delete(hotspotUsers)
+            .where(and(eq(hotspotUsers.orgId, ctx.orgId), eq(hotspotUsers.name, sub.username)));
+          await tx.delete(pppoeUsers)
+            .where(and(eq(pppoeUsers.orgId, ctx.orgId), eq(pppoeUsers.name, sub.username)));
+          await tx.delete(subscriptions).where(eq(subscriptions.id, sub.id));
+
+          const [remaining] = await tx.select({ count: sql<number>`count(*)` })
+            .from(subscriptions)
+            .where(eq(subscriptions.customerId, sub.customerId));
+          if (Number(remaining?.count) === 0) {
+            await tx.delete(deviceBindings).where(eq(deviceBindings.customerId, sub.customerId)).catch(() => {});
+            await tx.delete(customers).where(and(eq(customers.id, sub.customerId), eq(customers.orgId, ctx.orgId)));
+          }
+        });
+
+        if (cust?.phone) {
+          await clearCustomerRedis(ctx.redis, ctx.orgId, cust.phone).catch(() => {});
+        }
+
+        await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "user.deleted", "subscription", sub.id, { username: sub.username, bulk: true });
+        success++;
+      }
+      return { ok: true, count: success };
     }),
 });

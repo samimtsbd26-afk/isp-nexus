@@ -1,24 +1,24 @@
 // Typed API helpers for the portal — all calls go through the API proxy.
 
+import { trpcEncodeQueryInput, trpcSerializeWire, trpcParseResponse } from "./trpc-wire";
+
 const ORG_ID = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_ORG_ID ?? "212d7393-7375-4321-93f5-4789deb8b317";
 
 async function trpc<T>(procedure: string, input: unknown, method: "GET" | "POST" = "POST"): Promise<T> {
   if (method === "GET") {
-    const params = new URLSearchParams({ input: JSON.stringify({ json: input }) });
-    const res = await fetch(`/api/trpc/${procedure}?${params}`, { credentials: "include" });
-    const data = await res.json();
-    if (data?.error) throw new Error(data.error.message ?? "Request failed");
-    return data?.result?.data?.json as T;
+    const inputParam = trpcEncodeQueryInput(input ?? null);
+    const res = await fetch(`/api/trpc/${procedure}?input=${inputParam}`, { credentials: "include" });
+    const data = (await res.json()) as Record<string, unknown>;
+    return trpcParseResponse<T>(data);
   }
   const res = await fetch(`/api/trpc/${procedure}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ json: input }),
+    body: trpcSerializeWire(input ?? null),
   });
-  const data = await res.json();
-  if (data?.error) throw new Error(data.error.message ?? "Request failed");
-  return data?.result?.data?.json as T;
+  const data = (await res.json()) as Record<string, unknown>;
+  return trpcParseResponse<T>(data);
 }
 
 export const api = {
@@ -42,9 +42,12 @@ export const api = {
   },
 
   async trialStatus() {
-    return trpc<{ available: boolean; packageId: string | null }>(
-      "api/portal/trial/status" as never, undefined, "GET",
-    );
+    const res = await fetch(`/api/portal/trial/status?orgId=${encodeURIComponent(ORG_ID)}`, { credentials: "include" });
+    const json = (await res.json()) as { data?: { available: boolean; packageId: string | null }; error?: string };
+    if (!res.ok || json.error) throw new Error(json.error ?? "Trial status failed");
+    const data = json.data;
+    if (!data) throw new Error("Invalid trial status response");
+    return data;
   },
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -54,6 +57,28 @@ export const api = {
 
   async register(input: RegisterInput) {
     return trpc<LoginResult>("portal.register", { ...input, orgId: ORG_ID });
+  },
+
+  async trialRegister(input: TrialRegisterInput) {
+    return trpc<TrialRegisterResult>("portal.trialRegister", {
+      ...input,
+      orgId: ORG_ID,
+    });
+  },
+
+  async getOrderStatus(orderId: string, phone: string) {
+    return trpc<{ status: string; packageName: string | null }>(
+      "portal.checkOrder", { orderId, phone }, "GET",
+    );
+  },
+
+  async approvalStatus(phone: string) {
+    const res = await fetch(
+      `/api/portal/approval-status?orgId=${encodeURIComponent(ORG_ID)}&phone=${encodeURIComponent(phone)}`,
+      { credentials: "include" },
+    );
+    const json = (await res.json()) as { data?: ApprovalStatusResult; error?: string };
+    return json.data ?? null;
   },
 
   async guestOrder(input: GuestOrderInput) {
@@ -82,6 +107,42 @@ export const api = {
 
   async changePassword(token: string, currentPassword: string, newPassword: string) {
     return trpc<{ ok: boolean }>("portal.changePassword", { token, currentPassword, newPassword });
+  },
+
+  async getDeviceBindings(token: string) {
+    return trpc<DeviceBinding[]>("portal.getDeviceBindings", { token });
+  },
+
+  async resetDevice(token: string, bindingId: string) {
+    return trpc<{ ok: boolean }>("portal.resetDevice", { token, bindingId });
+  },
+
+  async logoutAllSessions(token: string) {
+    return trpc<{ ok: boolean }>("portal.logoutAllSessions", { token });
+  },
+
+  async getActiveSession(token: string) {
+    return trpc<ActiveSession | null>("portal.getActiveSession", { token });
+  },
+
+  async getNotifications(token: string) {
+    return trpc<PortalNotification[]>("portal.getNotifications", { token });
+  },
+
+  async markNotificationsRead(token: string) {
+    return trpc<{ ok: boolean }>("portal.markNotificationsRead", { token });
+  },
+
+  async openSupportTicket(token: string, subject: string, message: string) {
+    return trpc<{ id: string }>("portal.openTicket", { token, subject, message });
+  },
+
+  async getMyTickets(token: string) {
+    return trpc<SupportTicket[]>("portal.myTickets", { token });
+  },
+
+  async getSupportInfo(orgId: string) {
+    return trpc<SupportInfo>("portal.getSupportInfo", { orgId }, "GET");
   },
 };
 
@@ -115,6 +176,22 @@ export interface RegisterInput {
   email?: string;
   password: string;
   username?: string;
+}
+
+export interface TrialRegisterInput {
+  fullName: string;
+  phone: string;
+  password: string;
+  packageId: string;
+  macAddress?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+export interface TrialRegisterResult {
+  orderId: string;
+  customerId: string;
+  pending: true;
 }
 
 export interface GuestOrderInput {
@@ -170,6 +247,57 @@ export interface SubmitOrderInput {
   paymentMethod: "bkash" | "nagad" | "rocket" | "cash" | "bank" | "free";
   trxId?: string;
   paymentFrom?: string;
+}
+
+export interface ApprovalStatusResult {
+  approved: boolean;
+  status: string;
+  hotspotUsername?: string | null;
+  hotspotPassword?: string | null;
+  customerName?: string | null;
+  phone?: string | null;
+  packageName?: string | null;
+  expiresAt?: string | null;
+}
+
+export interface DeviceBinding {
+  id: string;
+  macAddress: string | null;
+  ipAddress: string | null;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface ActiveSession {
+  username: string;
+  address: string;
+  uptime: string;
+  rxBytes: number;
+  txBytes: number;
+}
+
+export interface PortalNotification {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  subject: string;
+  status: string;
+  priority: string;
+  createdAt: string;
+}
+
+export interface SupportInfo {
+  whatsappNumber: string | null;
+  callNumber: string | null;
+  supportEmail: string | null;
+  faqUrl: string | null;
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────

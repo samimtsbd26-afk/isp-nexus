@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { hotspotTemplates, routers } from "@isp-nexus/db";
 import { createHotspotTemplateSchema } from "@isp-nexus/shared";
-import { decryptText } from "../lib/crypto.js";
 import { env } from "../lib/env.js";
-import { getMikroTikClient, type MikroTikApi } from "../services/mikrotik/client.js";
+import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
+import { getSetting, SETTING_KEYS } from "../lib/config.js";
 
 export const hotspotRouter = router({
   listTemplates: authedProcedure.query(async ({ ctx }) => {
@@ -61,9 +61,15 @@ export const hotspotRouter = router({
       .where(and(eq(hotspotTemplates.id, input.id), eq(hotspotTemplates.orgId, ctx.orgId))).limit(1);
     if (!tmpl) throw new TRPCError({ code: "NOT_FOUND" });
 
+    // Get admin-configured portal domain — embed into MikroTik redirect files
+    const configuredDomain = await getSetting(ctx.db, ctx.orgId, SETTING_KEYS.HOTSPOT_PRIMARY_DOMAIN)
+      || await getSetting(ctx.db, ctx.orgId, SETTING_KEYS.PORTAL_DOMAIN)
+      || "";
+    const portalBase = configuredDomain.replace(/\/$/, "") || "https://wifi.skynity.org";
+
     const html = tmpl.htmlContent ?? buildDefaultHtml(tmpl);
     const css = tmpl.cssContent ?? buildDefaultCss(tmpl);
-    const files = await buildHotspotFiles(tmpl, html, css);
+    const files = await buildHotspotFiles(tmpl, html, css, portalBase);
 
     const [target] = await ctx.db.select().from(routers)
       .where(and(
@@ -74,15 +80,7 @@ export const hotspotRouter = router({
       .limit(1);
     if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Target router not found" });
 
-    const password = decryptText(target.passwordEncrypted);
-    const port = target.useSsl ? target.sslPort : target.port;
-    const client = await getMikroTikClient({
-      host: target.host,
-      port,
-      username: target.username,
-      password,
-      useSsl: target.useSsl,
-    });
+    const client = await connectRouter(target);
 
     try {
       const htmlDirectory = await getHotspotHtmlDirectory(client);
@@ -152,42 +150,78 @@ function buildHotspotFiles(
   tmpl: { title?: string | null; companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null },
   html: string,
   css: string,
+  portalBase = "https://wifi.skynity.org",
 ): Promise<Array<{ name: string; contents: string | Buffer }>> {
-  return buildProductionHotspotFiles().catch(() => buildGeneratedHotspotFiles(tmpl, html, css));
+  return buildProductionHotspotFiles(portalBase).catch(() => buildGeneratedHotspotFiles(tmpl, html, css, portalBase));
 }
 
-async function buildProductionHotspotFiles(): Promise<Array<{ name: string; contents: string | Buffer }>> {
+async function buildProductionHotspotFiles(portalBase: string): Promise<Array<{ name: string; contents: string | Buffer }>> {
   const here = dirname(fileURLToPath(import.meta.url));
   const hotspotDir = resolve(here, "../../../hotspot");
   const imageDir = resolve(hotspotDir, "img");
   const files: Array<{ name: string; contents: string | Buffer }> = [];
   const topLevel = await readdir(hotspotDir);
   for (const name of topLevel.filter((item) => /\.(html|css|js)$/i.test(item)).sort()) {
-    files.push({ name, contents: await readFile(resolve(hotspotDir, name), "utf8") });
+    let contents = await readFile(resolve(hotspotDir, name), "utf8");
+    // Replace the fetch-based redirect with embedded portal URL for MikroTik serving
+    if (/\.(html)$/i.test(name)) {
+      contents = contents.replace(
+        /fetch\(['"]\/api\/portal\/hotspot-config['"]\)[^;]+;[\s\S]*?\.catch\([^)]+\)[^;]+;/g,
+        `location.replace('${portalBase}/welcome' + location.search);`,
+      );
+    }
+    files.push({ name, contents });
   }
-  const images = await readdir(imageDir);
-  for (const image of images) {
-    files.push({ name: `img/${image}`, contents: await readFile(resolve(imageDir, image)) });
+  try {
+    const images = await readdir(imageDir);
+    for (const image of images) {
+      files.push({ name: `img/${image}`, contents: await readFile(resolve(imageDir, image)) });
+    }
+  } catch { /* no img dir */ }
+  // Always include the 4 canonical MikroTik redirect files (overwrite with embedded domain)
+  const mikrotikFiles = buildMikroTikRedirectFiles(portalBase);
+  for (const mf of mikrotikFiles) {
+    const existing = files.findIndex((f) => f.name === mf.name);
+    if (existing >= 0) files[existing] = mf;
+    else files.push(mf);
   }
   return files;
+}
+
+function buildMikroTikRedirectFiles(portalBase: string): Array<{ name: string; contents: string }> {
+  const base = portalBase.replace(/\/$/, "");
+  const spinner = `<style>body{margin:0;min-height:100vh;background:#0f172a;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;color:#94a3b8;flex-direction:column;gap:16px}.sp{width:28px;height:28px;border:3px solid #1e293b;border-top-color:#38bdf8;border-radius:50%;animation:s .8s linear infinite}@keyframes s{to{transform:rotate(360deg)}}</style>`;
+  return [
+    {
+      name: "login.html",
+      contents: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">${spinner}</head><body><div class="sp"></div><script>location.replace('${base}/welcome'+location.search);</script></body></html>`,
+    },
+    {
+      name: "alogin.html",
+      contents: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">${spinner}</head><body><div class="sp"></div><script>location.replace('${base}/s-dashboard'+location.search);</script></body></html>`,
+    },
+    {
+      name: "redirect.html",
+      contents: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"></head><body><script>var p=new URLSearchParams(location.search),d=p.get('dst')||p.get('orig')||'';location.replace(d&&/^https?:/.test(d)?d:'${base}');</script></body></html>`,
+    },
+    {
+      name: "rlogin.html",
+      contents: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">${spinner}</head><body><div class="sp"></div><script>location.replace('${base}/welcome'+location.search);</script></body></html>`,
+    },
+  ];
 }
 
 function buildGeneratedHotspotFiles(
   tmpl: { title?: string | null; companyName?: string | null; primaryColor?: string | null; backgroundColor?: string | null },
   html: string,
   css: string,
+  portalBase = "https://wifi.skynity.org",
 ): Array<{ name: string; contents: string }> {
-  const success = buildStatusPage(tmpl, "success", "Connected", "Your session is active.");
-  const payment = buildStatusPage(tmpl, "payment", "Payment", "Select a package from the portal to activate internet.");
-  const register = buildStatusPage(tmpl, "registration", "Registration", "Create an account from the ISP portal.");
-  const logout = buildStatusPage(tmpl, "logout", "Logged out", "Your hotspot session has ended.");
+  const mikrotikFiles = buildMikroTikRedirectFiles(portalBase);
   return [
-    { name: "login.html", contents: injectStylesheet(html) },
+    ...mikrotikFiles,
     { name: "style.css", contents: css },
-    { name: "status.html", contents: success },
-    { name: "payment.html", contents: payment },
-    { name: "register.html", contents: register },
-    { name: "logout.html", contents: logout },
+    { name: "status.html", contents: injectStylesheet(html) },
   ];
 }
 

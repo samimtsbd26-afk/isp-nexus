@@ -37,8 +37,12 @@ import { verifyAccessToken } from "./auth/session.js";
 import { initBot, stopBot, sendTrialRequestNotification, sendNewUserCreatedNotification, sendOrderNotification } from "./services/telegram/bot.js";
 import { logActivity } from "./lib/activity.js";
 import { formatPackageDurationShort, buildPlanDisplay } from "@isp-nexus/shared";
-import { startMonitoringWorker, startAlertsWorker, startExpiryWorker, startSyncWorker, startSecurityWorker, startWarningWorker, startRetentionWorker, scheduleJobs, setMonitoringEmitter } from "./jobs/queue.js";
+import { startMonitoringWorker, startAlertsWorker, startExpiryWorker, startSyncWorker, startSecurityWorker, startWarningWorker, startRetentionWorker, startDbBackupWorker, startBillingWorker, startAnomalyWorker, scheduleJobs, setMonitoringEmitter } from "./jobs/queue.js";
 import { allowedCorsOrigins, refreshCorsOrigins } from "./lib/cors-state.js";
+import { getSetting, SETTING_KEYS } from "./lib/config.js";
+import { runHealthCheck } from "./services/hotspot/health.js";
+import { logIncident } from "./services/incident/log.js";
+import { organizations } from "@isp-nexus/db";
 
 process.on("uncaughtException", (err) => {
   logger.fatal({ err }, "Uncaught exception — exiting");
@@ -515,6 +519,8 @@ app.get("/api/portal/approval-status", async (c) => {
       durationValue: packages.durationValue,
       durationUnit: packages.durationUnit,
       validityDays: packages.validityDays,
+      passwordEncrypted: subscriptions.passwordEncrypted,
+      username: subscriptions.username,
     })
       .from(subscriptions)
       .leftJoin(packages, eq(subscriptions.packageId, packages.id))
@@ -529,6 +535,8 @@ app.get("/api/portal/approval-status", async (c) => {
         validityDays: active.validityDays,
       };
       const planDisplay = buildPlanDisplay(active.packageName, dur);
+      let hotspotPassword: string | null = null;
+      try { if (active.passwordEncrypted) hotspotPassword = decryptText(active.passwordEncrypted); } catch {}
       return c.json({
         data: {
           approved: true,
@@ -541,6 +549,8 @@ app.get("/api/portal/approval-status", async (c) => {
           uploadMbps: active.uploadMbps,
           customerName: customer.fullName ?? null,
           phone: customer.phone,
+          hotspotPassword,
+          hotspotUsername: active.username ?? customer.phone,
         },
       });
     }
@@ -736,6 +746,56 @@ app.onError((err, c) => {
 
 app.get("/api/health", (c) => c.json({ ok: true, ts: new Date().toISOString() }));
 
+// Public: hotspot pages fetch this to get the configured portal URL (no hardcoded domains)
+app.get("/api/portal/hotspot-config", async (c) => {
+  try {
+    const orgId = portalOrg(c);
+    const db = createDb(env.DATABASE_URL);
+    const [primary, portal] = await Promise.all([
+      getSetting(db, orgId, SETTING_KEYS.HOTSPOT_PRIMARY_DOMAIN),
+      getSetting(db, orgId, SETTING_KEYS.PORTAL_DOMAIN),
+    ]);
+    const portalUrl = primary || portal || "";
+
+    // Log redirect event to Redis for the debug panel
+    const mac = c.req.query("mac") || "";
+    const ip = c.req.query("ip") || "";
+    if (mac || ip) {
+      const domain = portalUrl.replace(/^https?:\/\//, "").split("/")[0];
+      const entry = JSON.stringify({ mac, ip, redirectUrl: portalUrl, domain, success: true, ts: new Date().toISOString() });
+      const redis = getRedis();
+      redis.zadd(`hotspot:redirect_log:${orgId}`, Date.now(), entry).catch(() => {});
+      redis.zremrangebyrank(`hotspot:redirect_log:${orgId}`, 0, -501).catch(() => {});
+    }
+
+    return c.json({ portalUrl });
+  } catch {
+    return c.json({ portalUrl: "" });
+  }
+});
+
+// Public: portal reports auto-login attempt result for debug logging
+app.post("/api/portal/autologin-log", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+    const orgId = String(body.orgId || portalOrg(c));
+    const entry = JSON.stringify({
+      username: String(body.username || ""),
+      phone: String(body.phone || ""),
+      loginUrl: String(body.loginUrl || ""),
+      success: Boolean(body.success),
+      reason: String(body.reason || ""),
+      ts: new Date().toISOString(),
+    });
+    const redis = getRedis();
+    await redis.zadd(`hotspot:autologin_log:${orgId}`, Date.now(), entry);
+    await redis.zremrangebyrank(`hotspot:autologin_log:${orgId}`, 0, -501);
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ ok: true }); // non-fatal
+  }
+});
+
 const server = serve({
   fetch: app.fetch,
   port: env.PORT_API,
@@ -822,10 +882,32 @@ async function bootstrap() {
     const sWorker = startSyncWorker();
     const secWorker = startSecurityWorker();
     const rWorker = startRetentionWorker();
+    const dbBackupWorker = startDbBackupWorker();
+    const billingWorker = startBillingWorker();
+    const anomalyWorker = startAnomalyWorker();
     await scheduleJobs();
     initBot().catch((err) => {
       logger.warn({ err }, "Telegram bot failed to start — check TELEGRAM_BOT_TOKEN in .env");
     });
+
+    // Health check every 60 seconds — results stored in Redis, surfaced via tRPC
+    const healthDb = createDb(env.DATABASE_URL);
+    const runHealthForAllOrgs = async () => {
+      try {
+        const orgs = await healthDb.select({ id: organizations.id }).from(organizations).limit(20);
+        for (const org of orgs) {
+          runHealthCheck(healthDb, org.id).then((h) => {
+            if (!h.mikrotik.ok) logIncident(org.id, "router_disconnect", `MikroTik health check failed: ${h.mikrotik.error ?? "unreachable"}`, { latencyMs: h.mikrotik.latencyMs });
+            if (!h.redis.ok) logIncident(org.id, "redis_failure", `Redis health check failed: ${h.redis.error ?? "unreachable"}`);
+            if (!h.postgres.ok) logIncident(org.id, "postgres_failure", `Postgres health check failed: ${h.postgres.error ?? "unreachable"}`);
+            if (!h.tls.ok && h.portal.ok) logIncident(org.id, "tls_failure", `Portal TLS not configured or failed: ${h.tls.error ?? "check domain"}`);
+          }).catch(() => {});
+        }
+      } catch { /* non-fatal */ }
+    };
+    // First check after 10s, then every 60s
+    setTimeout(() => { void runHealthForAllOrgs(); }, 10_000);
+    setInterval(() => { void runHealthForAllOrgs(); }, 60_000);
 
     process.on("SIGTERM", async () => {
       logger.info("Shutting down...");

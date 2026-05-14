@@ -1,8 +1,134 @@
 import { useState } from "react";
+import { trpcDeserializeResultData, trpcEncodeQueryInput } from "../lib/trpc-http";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
-import { HardDrive, FileCode, Trash2, Download, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, Button, Select, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Empty, Modal, Input } from "../components/ui/index";
+import { HardDrive, FileCode, Trash2, Download, RefreshCw, Database, Server, CheckCircle, XCircle, Clock } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, Button, Dropdown, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Empty, Modal, Input, Select } from "../components/ui/index";
+
+type DbBackupResult = {
+  type: "postgres" | "redis";
+  status: "ok" | "error";
+  message: string;
+  durationMs?: number;
+  sizeBytes?: number;
+  timestamp: string;
+};
+
+function DbBackupSection() {
+  const { data: history, refetch: refetchHistory } = trpc.backup.listDbBackups.useQuery();
+  const runBackup = trpc.backup.runDbBackup.useMutation({
+    onSuccess: () => { void refetchHistory(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function trigger(type: "postgres" | "redis") {
+    toast.info(`Starting ${type === "postgres" ? "PostgreSQL" : "Redis"} backup…`);
+    runBackup.mutate({ type }, {
+      onSuccess: (r) => {
+        const res = r as DbBackupResult;
+        if (res.status === "ok") toast.success(`${type} backup completed`);
+        else toast.error(`Backup failed: ${res.message}`);
+      },
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-semibold">Database Backups</h2>
+        <p className="text-sm text-muted-foreground">PostgreSQL and Redis backups run automatically daily. Trigger manually if needed.</p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Card>
+          <CardContent className="flex items-center gap-4 p-5">
+            <div className="p-3 rounded-xl bg-blue-500/10 shrink-0">
+              <Database size={22} className="text-blue-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">PostgreSQL</p>
+              <p className="text-xs text-muted-foreground">Full database pg_dump</p>
+            </div>
+            <Button size="sm" variant="outline"
+              disabled={runBackup.isPending}
+              onClick={() => trigger("postgres")}>
+              {runBackup.isPending && runBackup.variables?.type === "postgres" ? <RefreshCw size={13} className="animate-spin" /> : <HardDrive size={13} />}
+              Backup
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="flex items-center gap-4 p-5">
+            <div className="p-3 rounded-xl bg-red-500/10 shrink-0">
+              <Server size={22} className="text-red-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">Redis</p>
+              <p className="text-xs text-muted-foreground">Persistent BGSAVE snapshot</p>
+            </div>
+            <Button size="sm" variant="outline"
+              disabled={runBackup.isPending}
+              onClick={() => trigger("redis")}>
+              {runBackup.isPending && runBackup.variables?.type === "redis" ? <RefreshCw size={13} className="animate-spin" /> : <HardDrive size={13} />}
+              Backup
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {history && history.length > 0 && (
+        <Card>
+          <CardHeader className="pb-0">
+            <CardTitle>Backup History</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 pt-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Size</TableHead>
+                  <TableHead>Time</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(history as DbBackupResult[]).map((h, i) => (
+                  <TableRow key={i}>
+                    <TableCell>
+                      <Badge variant={h.type === "postgres" ? "info" : "warning"}>
+                        {h.type === "postgres" ? <Database size={11} className="inline mr-1" /> : <Server size={11} className="inline mr-1" />}
+                        {h.type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {h.status === "ok"
+                        ? <span className="flex items-center gap-1 text-xs text-emerald-600"><CheckCircle size={12} /> OK</span>
+                        : <span className="flex items-center gap-1 text-xs text-red-500"><XCircle size={12} /> {h.message}</span>}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {h.durationMs != null ? `${h.durationMs} ms` : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {h.sizeBytes != null ? `${(h.sizeBytes / 1024).toFixed(1)} KB` : "—"}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <div className="flex items-center gap-1">
+                        <Clock size={11} />
+                        {new Date(h.timestamp).toLocaleString()}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 export default function Backup() {
   const { data: routers } = trpc.routerMgmt.list.useQuery();
@@ -31,12 +157,15 @@ export default function Backup() {
     // Fetch content and trigger browser download
     void (async () => {
       try {
-        const input = encodeURIComponent(JSON.stringify({ json: { id } }));
+        const input = trpcEncodeQueryInput({ id });
         const result = await fetch(`/api/trpc/backup.getContent?input=${input}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem("isp_access_token")}` },
         });
         const json = await result.json();
-        const content = json?.result?.data?.json?.configData;
+        const content =
+          json?.result?.data !== undefined
+            ? trpcDeserializeResultData<{ configData?: string }>(json.result.data).configData
+            : undefined;
         if (!content) { toast.error("No content to download"); return; }
         const blob = new Blob([content], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
@@ -57,10 +186,9 @@ export default function Backup() {
           <p className="text-muted-foreground text-sm">MikroTik router configuration backups</p>
         </div>
         <div className="flex gap-2">
-          <Select title="Router" value={selected} onChange={(e) => setRouterId(e.target.value)} className="w-44">
-            <option value="">All Routers</option>
-            {routers?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </Select>
+          <Dropdown title="Router" value={selected} onChange={setRouterId} className="w-44"
+            options={[{ value: "", label: "All Routers" }, ...(routers?.map((r) => ({ value: r.id, label: r.name })) ?? [])]}
+          />
           <Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw size={14} /></Button>
           <Button size="sm" onClick={() => setShowCreate(true)} disabled={!selected}>
             <HardDrive size={14} /> Create Backup
@@ -153,6 +281,10 @@ export default function Backup() {
           )}
         </CardContent>
       </Card>
+
+      <div className="border-t border-border pt-5">
+        <DbBackupSection />
+      </div>
 
       <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create Router Backup">
         <div className="space-y-4">

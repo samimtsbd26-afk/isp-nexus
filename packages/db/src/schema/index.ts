@@ -31,6 +31,8 @@ export const packageTypeEnum = pgEnum("package_type", [
   "static",
 ]);
 
+export const packageDurationUnitEnum = pgEnum("package_duration_unit", ["hour", "day"]);
+
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "active",
   "suspended",
@@ -187,6 +189,22 @@ export const routers = pgTable("routers", {
   freeMemoryMb: integer("free_memory_mb"),
   temperatureCelsius: real("temperature_celsius"),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  provisionStatus: varchar("provision_status", { length: 20 }).notNull().default("pending"),
+  provisionError: text("provision_error"),
+  provisionPushedAt: timestamp("provision_pushed_at", { withTimezone: true }),
+  portPlan: jsonb("port_plan").$type<{
+    wan?: string;
+    hotspot?: string;
+    pppoe?: string;
+    lan?: string;
+    admin?: string;
+    hotspotSubnet?: string;
+    hotspotPool?: string;
+    hotspotGateway?: string;
+    pppoeLocalPool?: string;
+    lanSubnet?: string;
+    lanGateway?: string;
+  }>(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -200,10 +218,14 @@ export const wireguardPeers = pgTable("wireguard_peers", {
   routerId: uuid("router_id")
     .notNull()
     .references(() => routers.id, { onDelete: "cascade" }),
+
   mikrotikId: varchar("mikrotik_id", { length: 100 }),
   interface: varchar("interface", { length: 100 }).notNull().default("wg0"),
   publicKey: text("public_key").notNull(),
   presharedKeyEnc: text("preshared_key_enc"),
+  privateKeyEnc: text("private_key_enc"),
+  serverPublicKey: text("server_public_key"),
+  label: varchar("label", { length: 100 }),
   allowedAddress: text("allowed_address"),
   allowedIps: text("allowed_ips"),
   endpointAddress: varchar("endpoint_address", { length: 255 }),
@@ -222,7 +244,7 @@ export const wireguardPeers = pgTable("wireguard_peers", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [unique("wireguard_peers_router_pubkey").on(t.routerId, t.publicKey)]);
 
 export const ipAddresses = pgTable("ip_addresses", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -362,6 +384,9 @@ export const customers = pgTable("customers", {
   }),
   passwordHash: text("password_hash"),
   notes: text("notes"),
+  avatar: text("avatar"),
+  role: varchar("role", { length: 50 }),
+  permissions: jsonb("permissions").default([]),
   isActive: boolean("is_active").notNull().default(true),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
   deletedBy: uuid("deleted_by").references(() => users.id, {
@@ -392,6 +417,8 @@ export const packages = pgTable("packages", {
   burstTimeSeconds: integer("burst_time_seconds"),
   priceBdt: integer("price_bdt").notNull(),
   validityDays: integer("validity_days").notNull().default(30),
+  durationValue: integer("duration_value").notNull().default(1),
+  durationUnit: packageDurationUnitEnum("duration_unit").notNull().default("day"),
   radiusGroupName: varchar("radius_group_name", { length: 100 }),
   mikrotikProfileName: varchar("mikrotik_profile_name", { length: 100 }).default("default"),
   description: text("description"),
@@ -464,6 +491,7 @@ export const orders = pgTable("orders", {
   trxId: varchar("trx_id", { length: 100 }),
   paymentFrom: varchar("payment_from", { length: 20 }),
   screenshotUrl: text("screenshot_url"),
+  registrationMeta: text("registration_meta"),
   status: orderStatusEnum("status").notNull().default("pending"),
   reviewedBy: uuid("reviewed_by").references(() => users.id, {
     onDelete: "set null",
@@ -502,6 +530,8 @@ export const invoices = pgTable("invoices", {
   dueAt: timestamp("due_at", { withTimezone: true }),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   notes: text("notes"),
+  lateFee_bdt: integer("late_fee_bdt").notNull().default(0),
+  overdueNotifiedAt: timestamp("overdue_notified_at", { withTimezone: true }),
 });
 
 export const vouchers = pgTable("vouchers", {
@@ -762,6 +792,28 @@ export const pppoeUsers = pgTable("pppoe_users", {
     .defaultNow(),
 });
 
+export const deviceBindings = pgTable("device_bindings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  customerId: uuid("customer_id")
+    .notNull()
+    .references(() => customers.id, { onDelete: "cascade" }),
+  routerId: uuid("router_id").references(() => routers.id, {
+    onDelete: "set null",
+  }),
+  macAddress: varchar("mac_address", { length: 17 }).notNull(),
+  ipAddress: varchar("ip_address", { length: 50 }),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const backupConfigs = pgTable("backup_configs", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id")
@@ -783,6 +835,39 @@ export const backupConfigs = pgTable("backup_configs", {
     .notNull()
     .defaultNow(),
 });
+
+// ─── Reseller System ──────────────────────────────────────────────────────────
+
+export const resellers = pgTable("resellers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  commissionPct: real("commission_pct").notNull().default(0),
+  walletBalanceBdt: integer("wallet_balance_bdt").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("resellers_org_user").on(t.orgId, t.userId)]);
+
+export const resellerCustomers = pgTable("reseller_customers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "cascade" }),
+  customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("reseller_customers_uniq").on(t.resellerId, t.customerId)]);
+
+export const resellerCommissions = pgTable("reseller_commissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  resellerId: uuid("reseller_id").notNull().references(() => resellers.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  amountBdt: integer("amount_bdt").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("reseller_commissions_uniq").on(t.resellerId, t.orderId)]);
 
 // ─── Notifications / Audit ────────────────────────────────────────────────────
 
@@ -849,13 +934,57 @@ export const appSettings = pgTable("app_settings", {
   key: varchar("key", { length: 100 }).notNull(),
   value: text("value"),
   type: varchar("type", { length: 20 }).notNull().default("string"),
+  encrypted: boolean("encrypted").notNull().default(false),
+  description: text("description"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+}, (t) => [unique("app_settings_org_key").on(t.orgId, t.key)]);
+
+export const vpsConnections = pgTable("vps_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  label: varchar("label", { length: 100 }).notNull(),
+  host: varchar("host", { length: 255 }).notNull(),
+  port: integer("port").notNull().default(22),
+  username: varchar("username", { length: 100 }).notNull().default("root"),
+  authType: varchar("auth_type", { length: 20 }).notNull().default("key"),
+  privateKeyEnc: text("private_key_enc"),
+  passwordEnc: text("password_enc"),
+  isDefault: boolean("is_default").notNull().default(false),
+  lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+  lastTestOk: boolean("last_test_ok"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const virtualHosts = pgTable("virtual_hosts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  domain: varchar("domain", { length: 255 }).notNull(),
+  label: varchar("label", { length: 100 }),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  listenHttp: boolean("listen_http").notNull().default(false),
+  primaryUpstream: varchar("primary_upstream", { length: 255 }),
+  hasApiProxy: boolean("has_api_proxy").notNull().default(false),
+  apiUpstream: varchar("api_upstream", { length: 255 }).default("api:3001"),
+  hasSocketProxy: boolean("has_socket_proxy").notNull().default(false),
+  staticRoot: varchar("static_root", { length: 255 }),
+  staticFallback: varchar("static_fallback", { length: 100 }),
+  gzipEnabled: boolean("gzip_enabled").notNull().default(true),
+  securityHeaders: boolean("security_headers").notNull().default(false),
+  cacheControl: varchar("cache_control", { length: 100 }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("virtual_hosts_org_domain").on(t.orgId, t.domain)]);
 
 export const nmsDevices = pgTable("nms_devices", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -979,6 +1108,7 @@ export const customersRelations = relations(customers, ({ one, many }) => ({
   subscriptions: many(subscriptions),
   orders: many(orders),
   supportTickets: many(supportTickets),
+  deviceBindings: many(deviceBindings),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -1035,6 +1165,9 @@ export type TelegramConfig = typeof telegramConfigs.$inferSelect;
 export type AlertLog = typeof alertLogs.$inferSelect;
 export type ActivityLog = typeof activityLog.$inferSelect;
 export type AppSetting = typeof appSettings.$inferSelect;
+export type VirtualHost = typeof virtualHosts.$inferSelect;
+export type InsertVirtualHost = typeof virtualHosts.$inferInsert;
+export type VpsConnection = typeof vpsConnections.$inferSelect;
 export type NmsDevice = typeof nmsDevices.$inferSelect;
 export type PppoeUser = typeof pppoeUsers.$inferSelect;
 export type HotspotUser = typeof hotspotUsers.$inferSelect;
@@ -1042,4 +1175,10 @@ export type BackupConfig = typeof backupConfigs.$inferSelect;
 export type FirewallRule = typeof firewallRules.$inferSelect;
 export type DhcpLease = typeof dhcpLeases.$inferSelect;
 export type RouteEntry = typeof routeEntries.$inferSelect;
+export type DeviceBinding = typeof deviceBindings.$inferSelect;
+export type InsertDeviceBinding = typeof deviceBindings.$inferInsert;
 export type PaymentConfig = typeof paymentConfigs.$inferSelect;
+export type Reseller = typeof resellers.$inferSelect;
+export type InsertReseller = typeof resellers.$inferInsert;
+export type ResellerCustomer = typeof resellerCustomers.$inferSelect;
+export type ResellerCommission = typeof resellerCommissions.$inferSelect;

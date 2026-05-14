@@ -326,6 +326,71 @@ export function startRetentionWorker(): Worker {
   }, getQueueConnection());
 }
 
+export function startBillingWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("billing", async (job) => {
+    logger.info({ jobId: job.id }, "Billing job started");
+    const { runBillingCycle } = await import("../services/billing/automation.js");
+    const orgs = await db.select().from(organizations);
+    for (const org of orgs) {
+      try {
+        const result = await runBillingCycle(org.id);
+        logger.info({ orgId: org.id, result }, "Billing cycle completed for org");
+      } catch (err) {
+        logger.warn({ err, orgId: org.id }, "Billing cycle failed for org");
+      }
+    }
+    logger.info({ jobId: job.id }, "Billing job done");
+  }, getQueueConnection());
+}
+
+export function startDbBackupWorker(): Worker {
+  return new Worker("db-backup", async (job) => {
+    logger.info({ jobId: job.id }, "DB backup job started");
+    const { runPostgresBackup, runRedisBackup } = await import("../services/backup/database.js");
+    const [pgResult, redisResult] = await Promise.allSettled([runPostgresBackup(), runRedisBackup()]);
+    logger.info({
+      postgres: pgResult.status,
+      redis: redisResult.status,
+    }, "DB backup job completed");
+  }, getQueueConnection());
+}
+
+export function startAnomalyWorker(): Worker {
+  const db = createDb(env.DATABASE_URL);
+  return new Worker("anomaly", async (job) => {
+    logger.info({ jobId: job.id }, "Anomaly detection job started");
+    const { runAnomalyDetection } = await import("../services/ai/incident-detector.js");
+    const orgs = await db.select().from(organizations);
+    let totalIncidents = 0;
+    for (const org of orgs) {
+      try {
+        const incidents = await runAnomalyDetection(org.id);
+        totalIncidents += incidents.length;
+        if (incidents.length > 0) {
+          const criticals = incidents.filter((i) => i.severity === "CRITICAL");
+          if (criticals.length > 0) {
+            const [tgCfg] = await db
+              .select()
+              .from(telegramConfigs)
+              .where(and(eq(telegramConfigs.orgId, org.id), eq(telegramConfigs.alertsEnabled, true)))
+              .limit(1);
+            if (tgCfg) {
+              const msg = criticals
+                .map((i) => `🚨 *${i.title}*\n${i.detail}`)
+                .join("\n\n");
+              await sendAlert(tgCfg.chatId, msg).catch(() => null);
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn({ err, orgId: org.id }, "Anomaly detection failed for org");
+      }
+    }
+    logger.info({ jobId: job.id, totalIncidents }, "Anomaly detection job completed");
+  }, getQueueConnection());
+}
+
 export async function scheduleJobs(): Promise<void> {
   const monitoringQueue = getMonitoringQueue();
   const alertsQueue = getAlertsQueue();
@@ -334,6 +399,9 @@ export async function scheduleJobs(): Promise<void> {
   const securityQueue = new Queue("security", getQueueConnection());
   const warningQueue = new Queue("warnings", getQueueConnection());
   const retentionQueue = new Queue("retention", getQueueConnection());
+  const dbBackupQueue = new Queue("db-backup", getQueueConnection());
+  const billingQueue = new Queue("billing", getQueueConnection());
+  const anomalyQueue = new Queue("anomaly", getQueueConnection());
   try {
     await monitoringQueue.add("collect", {}, { repeat: { every: 30_000 } });
     await alertsQueue.add("check", {}, { repeat: { every: 60_000 } });
@@ -342,6 +410,9 @@ export async function scheduleJobs(): Promise<void> {
     await syncQueue.add("sync", {}, { repeat: { every: 5 * 60 * 1000 } }); // 5 min
     await securityQueue.add("check", {}, { repeat: { every: 10 * 60 * 1000 } }); // 10 min
     await retentionQueue.add("cleanup", {}, { repeat: { every: 6 * 60 * 60 * 1000 } }); // 6 hours
+    await dbBackupQueue.add("backup", {}, { repeat: { every: 24 * 60 * 60 * 1000 } }); // daily
+    await billingQueue.add("cycle", {}, { repeat: { every: 24 * 60 * 60 * 1000 } }); // daily
+    await anomalyQueue.add("detect", {}, { repeat: { every: 2 * 60 * 1000 } }); // every 2 min
   } finally {
     await monitoringQueue.close();
     await alertsQueue.close();
@@ -350,6 +421,9 @@ export async function scheduleJobs(): Promise<void> {
     await syncQueue.close();
     await securityQueue.close();
     await retentionQueue.close();
+    await dbBackupQueue.close();
+    await billingQueue.close();
+    await anomalyQueue.close();
   }
   logger.info("BullMQ jobs scheduled");
 }

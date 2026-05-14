@@ -96,6 +96,15 @@ export default function Landing() {
   const [searchParams] = useSearchParams();
   const mac = searchParams.get("mac") ?? searchParams.get("MAC") ?? "";
 
+  // Capture MikroTik hotspot params on first landing and persist for auto-login after approval
+  useEffect(() => {
+    const linkLogin = searchParams.get("link-login-only") ?? searchParams.get("link-login") ?? "";
+    const ip = searchParams.get("ip") ?? "";
+    if (linkLogin) sessionStorage.setItem("isp_link_login", linkLogin);
+    if (mac) sessionStorage.setItem("isp_hotspot_mac", mac);
+    if (ip) sessionStorage.setItem("isp_hotspot_ip", ip);
+  }, [searchParams, mac]);
+
   const [packages, setPackages] = useState<Package[]>([]);
   const [loading, setLoading] = useState(true);
   const [macState, setMacState] = useState<MacState>({ isNewDevice: true, hasExpired: false, hasActive: false, hasTrial: false });
@@ -117,6 +126,10 @@ export default function Landing() {
                 // Active subscriber → redirect to login/dashboard
                 if ((r as any).hasActiveSubscription && (r as any).hasActiveSession) {
                   navigate("/login?redirect=dashboard");
+                }
+                // Pending approval → redirect to pending page
+                if ((r as any).hasPendingOrder) {
+                  navigate("/pending");
                 }
               }
             }).catch(() => {})

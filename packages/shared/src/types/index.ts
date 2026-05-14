@@ -23,6 +23,7 @@ export interface SocketEvents {
   "bandwidth:update": { routerId: string; interfaces: Array<{ name: string; rxBps: number; txBps: number }> };
   "ping:update": { routerId: string; target: string; avgMs: number; packetLossPct: number };
   "alert:new": { routerId: string; routerName: string; alertType: string; message: string; severity: string };
+  "customer:new": { orgId: string; customerId: string; fullName: string; phone: string; packageName?: string | null; pendingApproval?: boolean };
   "order:new": { orgId: string; orderId: string; customerName: string; customerPhone: string; amountBdt: number; paymentMethod: string; trxId?: string };
   "order:approved": { orgId: string; orderId: string; customerName: string; amountBdt: number; packageName: string };
   "order:stats": { orgId: string; pendingCount: number; todayRevenue: number; totalActiveSubscriptions: number };

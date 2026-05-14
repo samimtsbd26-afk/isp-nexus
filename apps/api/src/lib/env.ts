@@ -30,6 +30,17 @@ const schema = z.object({
   APP_URL: z.string().default("http://localhost:3000"),
   PORTAL_URL: z.string().default("http://localhost:3002"),
   HOTSPOT_URL: z.string().optional(),
+  CORS_ORIGINS: z.string().default("https://admin.skynity.org,https://wifi.skynity.org,https://hotspot.skynity.org"),
+  PORTAL_JWT_EXPIRES: z.string().default("7d"),
+  CADDY_ADMIN_URL: z.string().default("http://localhost:2019"),
+  SSL_EMAIL: z.string().email().optional(),
+  RADIUS_SECRET: z.string().default("changeme"),
+  RADIUS_AUTH_PORT: z.coerce.number().default(1812),
+  RADIUS_ACCT_PORT: z.coerce.number().default(1813),
+  WG_INTERFACE: z.string().default("wg0"),
+  WG_SERVER_IP: z.string().default("10.100.0.1/24"),
+  WG_LISTEN_PORT: z.coerce.number().default(51820),
+  WG_DNS: z.string().default("1.1.1.1,8.8.8.8"),
 });
 
 const parsed = schema.safeParse(process.env);

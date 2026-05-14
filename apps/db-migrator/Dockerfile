@@ -1,12 +1,7 @@
 FROM node:22-alpine
-RUN npm install -g pnpm@9
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml turbo.json ./
-COPY packages/db/package.json ./packages/db/
-COPY packages/shared/package.json ./packages/shared/
-COPY apps/api/package.json ./apps/api/
-COPY apps/web/package.json ./apps/web/
-COPY apps/portal/package.json ./apps/portal/
-RUN pnpm install --no-frozen-lockfile
-COPY packages/ ./packages/
-CMD ["sh", "-c", "pnpm --filter @isp-nexus/db exec drizzle-kit push --force"]
+COPY apps/db-migrator/migrate.mjs ./migrator/migrate.mjs
+COPY apps/db-migrator/mark-drizzle-ledger.mjs ./migrator/mark-drizzle-ledger.mjs
+COPY packages/db/migrations ./packages/db/migrations
+RUN cd migrator && npm init -y && npm install postgres
+CMD ["sh", "-c", "node migrator/migrate.mjs && node migrator/mark-drizzle-ledger.mjs"]

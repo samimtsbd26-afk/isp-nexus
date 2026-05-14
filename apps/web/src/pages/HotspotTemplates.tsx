@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   Code2, Eye, MonitorSmartphone, Plus, RotateCcw, Save, Smartphone, SunMoon,
   Trash2, Upload, Palette, Layout, History, Maximize2, X, ChevronUp, ChevronDown,
-  Check, Layers, Globe, Image, Type, Sliders,
+  Check, Layers, Globe, Image, Type, Sliders, Pencil, Copy, AlertTriangle,
 } from "lucide-react";
 import {
   Card, CardContent, Button, Badge, Modal, Input, Empty, Select,
@@ -337,11 +337,11 @@ function buildHtml(f: TemplateForm): string {
     ? `<div class="terms-box">${f.termsText}</div>` : "";
 
   const pkgs = f.packages.map((p) =>
-    `<div class="pkg-card">
+    `<div class="pkg-card" onclick="if(window.__skyBuy)window.__skyBuy('${p.code}','${p.name}','${p.price}')">
         <span class="pkg-name">${p.name}</span>
         <span class="pkg-price">৳${p.price}</span>
         <span class="pkg-speed">${p.speed} · ${p.days}d · ${p.devices} device${p.devices === "1" ? "" : "s"}</span>
-        <a href="payment.html?pkg=${p.code}" class="pkg-btn">Buy Now</a>
+        <button class="pkg-btn" type="button">Buy Now</button>
       </div>`,
   ).join("\n      ");
 
@@ -585,7 +585,13 @@ function VersionHistoryPanel({ currentForm, onRestore, onClose }: { currentForm:
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function HotspotTemplates() {
+export default function HotspotTemplates({
+  routerId: externalRouterId,
+  embedded = false,
+}: {
+  routerId?: string;
+  embedded?: boolean;
+} = {}) {
   const { data: templates, refetch, isLoading } = trpc.hotspot.listTemplates.useQuery();
   const { data: routers } = trpc.routerMgmt.list.useQuery();
 
@@ -597,21 +603,26 @@ export default function HotspotTemplates() {
   const [tab, setTab] = useState<EditorTab>("visual");
   const [previewMode, setPreviewMode] = useState<"desktop" | "mobile">("desktop");
   const [previewTheme, setPreviewTheme] = useState<"dark" | "light">("dark");
-  // Preview modal device mode (separate from builder preview mode)
   const [previewModalDevice, setPreviewModalDevice] = useState<"desktop" | "android" | "captive">("desktop");
-  const [routerId, setRouterId] = useState("");
+  const [localRouterId, setLocalRouterId] = useState("");
+  // Edit mode: null = creating new, string = editing existing template ID
+  const [editMode, setEditMode] = useState<string | null>(null);
+  // Confirmation modals
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [setDefaultTarget, setSetDefaultTarget] = useState<{ id: string; name: string } | null>(null);
 
-  const selectedRouter = routerId
+  const selectedRouter = externalRouterId
+    || localRouterId
     || routers?.find((r) => r.isDefault)?.id
     || routers?.[0]?.id
     || "";
 
   const create = trpc.hotspot.createTemplate.useMutation({
-    onSuccess: () => { refetch(); setShowAdd(false); setForm(EMPTY_FORM); toast.success("Template created"); },
+    onSuccess: () => { refetch(); setShowAdd(false); setForm(EMPTY_FORM); setEditMode(null); toast.success("Template created"); },
     onError: (e) => toast.error(e.message),
   });
   const update = trpc.hotspot.updateTemplate.useMutation({
-    onSuccess: () => { refetch(); toast.success("Template saved"); },
+    onSuccess: () => { refetch(); setShowAdd(false); setForm(EMPTY_FORM); setEditMode(null); toast.success("Template updated"); },
     onError: (e) => toast.error(e.message),
   });
   const deploy = trpc.hotspot.deployTemplate.useMutation({
@@ -637,11 +648,34 @@ export default function HotspotTemplates() {
 
   const livePreviewDoc = useMemo(() => buildPreviewDoc(form, previewTheme), [form, previewTheme]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Open builder pre-filled with an existing template for editing
+  const openEdit = useCallback((t: NonNullable<typeof templates>[number]) => {
+    setForm({
+      ...EMPTY_FORM,
+      name: t.name,
+      title: t.title ?? "",
+      companyName: t.companyName ?? "",
+      logoUrl: t.logoUrl ?? "",
+      primaryColor: t.primaryColor ?? "#06b6d4",
+      backgroundColor: t.backgroundColor ?? "#0c0f1a",
+      htmlContent: t.htmlContent ?? "",
+      cssContent: t.cssContent ?? "",
+      isDefault: t.isDefault,
+    });
+    setEditMode(t.id);
+    setTab("code"); // HTML/CSS is what's stored; visual settings aren't persisted separately
+    setShowAdd(true);
+  }, []);
+
+  const handleSubmit = (e: React.SyntheticEvent) => {
     e.preventDefault();
     if (!form.name.trim()) { toast.error("Template name is required"); return; }
-    saveVersion("Before create: " + form.name, form);
-    create.mutate(toApiPayload(form));
+    saveVersion((editMode ? "Before edit: " : "Before create: ") + form.name, form);
+    if (editMode) {
+      update.mutate({ id: editMode, ...toApiPayload(form) });
+    } else {
+      create.mutate(toApiPayload(form));
+    }
   };
 
   const handleLogoUpload = (file: File | undefined) => {
@@ -671,21 +705,33 @@ export default function HotspotTemplates() {
 
   return (
     <div className="space-y-5">
-      {/* Page Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold">Hotspot Template Builder</h1>
-          <p className="text-muted-foreground text-sm">Design and publish custom MikroTik login pages</p>
+      {/* Page Header — hidden when embedded inside HotspotControl */}
+      {!embedded && (
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-xl font-bold">Hotspot Template Builder</h1>
+            <p className="text-muted-foreground text-sm">Design and publish custom MikroTik login pages</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Select title="Publish router" value={selectedRouter} onChange={(e) => setLocalRouterId(e.target.value)} className="w-44">
+              {routers?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </Select>
+            <Button size="sm" onClick={() => { setForm(EMPTY_FORM); setTab("library"); setShowAdd(true); }}>
+              <Plus size={14} /> New Template
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Select title="Publish router" value={selectedRouter} onChange={(e) => setRouterId(e.target.value)} className="w-44">
-            {routers?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </Select>
+      )}
+
+      {/* Toolbar when embedded */}
+      {embedded && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-xs text-muted-foreground">MikroTik login page টেমপ্লেট তৈরি ও deploy করুন</p>
           <Button size="sm" onClick={() => { setForm(EMPTY_FORM); setTab("library"); setShowAdd(true); }}>
-            <Plus size={14} /> New Template
+            <Plus size={13} className="mr-1" /> New Template
           </Button>
         </div>
-      </div>
+      )}
 
       {/* Template Grid */}
       {isLoading && (
@@ -703,35 +749,52 @@ export default function HotspotTemplates() {
               style={{ background: `linear-gradient(to right, ${t.primaryColor ?? "#3b82f6"}, ${t.backgroundColor ?? "#0f172a"})` }} />
             <CardContent className="p-4 space-y-3">
               <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-sm">{t.name}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-sm truncate">{t.name}</p>
                   <p className="text-xs text-muted-foreground">{t.companyName ?? "—"}</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                    {new Date(t.updatedAt).toLocaleDateString("en-BD", { day: "2-digit", month: "short", year: "numeric" })}
+                  </p>
                 </div>
-                {t.isDefault && <Badge variant="info">Default</Badge>}
+                <div className="flex flex-col gap-1 items-end shrink-0">
+                  {t.isDefault && <Badge variant="info" className="text-[10px]">Default</Badge>}
+                  {t.htmlContent && <Badge variant="outline" className="text-[10px]">Custom HTML</Badge>}
+                </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full border border-border" style={{ background: t.primaryColor ?? "#3b82f6" }} />
-                <span className="text-xs text-muted-foreground font-mono">{t.primaryColor}</span>
-                <div className="w-5 h-5 rounded-full border border-border ml-1" style={{ background: t.backgroundColor ?? "#0f172a" }} />
-                <span className="text-xs text-muted-foreground font-mono">{t.backgroundColor}</span>
+                <div className="w-5 h-5 rounded-full border border-border shrink-0" style={{ background: t.primaryColor ?? "#3b82f6" }} />
+                <span className="text-xs text-muted-foreground font-mono">{t.primaryColor ?? "—"}</span>
+                <div className="w-5 h-5 rounded-full border border-border ml-auto shrink-0" style={{ background: t.backgroundColor ?? "#0f172a" }} />
+                <span className="text-xs text-muted-foreground font-mono">{t.backgroundColor ?? "—"}</span>
               </div>
-              <div className="flex gap-1.5 pt-1 border-t border-border">
-                <Button size="sm" variant="outline" className="flex-1" onClick={() => setPreviewId(t.id)}>
-                  <Eye size={12} /> Preview
+              <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-border">
+                {/* Row 1 */}
+                <Button size="sm" variant="outline" onClick={() => setPreviewId(t.id)}>
+                  <Eye size={12} className="mr-1" /> Preview
                 </Button>
-                <Button size="sm" variant="outline" title="Save as version"
-                  onClick={() => { create.mutate({ name: `${t.name} copy`, primaryColor: t.primaryColor ?? "#06b6d4", backgroundColor: t.backgroundColor ?? "#0c0f1a", htmlContent: t.htmlContent ?? "", cssContent: t.cssContent ?? "", isDefault: false, title: t.title ?? undefined, companyName: t.companyName ?? undefined, logoUrl: t.logoUrl ?? undefined }); }}>
-                  <Save size={12} />
+                <Button size="sm" variant="outline" onClick={() => openEdit(t)}>
+                  <Pencil size={12} className="mr-1" /> Edit
                 </Button>
-                <Button size="sm" variant="secondary" disabled={deploy.isPending || !selectedRouter}
-                  title="Publish to MikroTik"
+                {/* Row 2 */}
+                <Button size="sm" variant="secondary"
+                  disabled={deploy.isPending || !selectedRouter}
+                  title={!selectedRouter ? "Select a router first" : "Publish to MikroTik router"}
                   onClick={() => deploy.mutate({ id: t.id, routerId: selectedRouter })}>
-                  <Upload size={12} />
+                  <Upload size={12} className="mr-1" />
+                  {deploy.isPending ? "Publishing…" : "Publish"}
                 </Button>
-                <Button size="sm" variant="ghost"
-                  onClick={() => { if (globalThis.confirm(`Delete "${t.name}"?`)) del.mutate({ id: t.id }); }}>
-                  <Trash2 size={12} className="text-muted-foreground" />
-                </Button>
+                <div className="flex gap-1">
+                  <Button size="sm" variant="ghost" className="flex-1"
+                    title="Duplicate template"
+                    onClick={() => { create.mutate({ name: `${t.name} copy`, primaryColor: t.primaryColor ?? "#06b6d4", backgroundColor: t.backgroundColor ?? "#0c0f1a", htmlContent: t.htmlContent ?? "", cssContent: t.cssContent ?? "", isDefault: false, title: t.title ?? undefined, companyName: t.companyName ?? undefined, logoUrl: t.logoUrl ?? undefined }); }}>
+                    <Copy size={12} />
+                  </Button>
+                  <Button size="sm" variant="ghost"
+                    className="hover:bg-red-500/10 hover:text-red-400"
+                    onClick={() => setDeleteTarget({ id: t.id, name: t.name })}>
+                    <Trash2 size={12} />
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -744,7 +807,7 @@ export default function HotspotTemplates() {
       </div>
 
       {/* ── Builder Modal ──────────────────────────────────────────────────── */}
-      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Hotspot Template Builder" className="max-w-7xl max-h-[96vh] overflow-hidden flex flex-col">
+      <Modal open={showAdd} onClose={() => { setShowAdd(false); setEditMode(null); setForm(EMPTY_FORM); }} title={editMode ? "Edit Template" : "New Template"} className="max-w-7xl max-h-[96vh] overflow-hidden flex flex-col">
         <form onSubmit={handleSubmit} className="flex-1 overflow-hidden flex flex-col min-h-0">
 
           {/* Top bar */}
@@ -761,8 +824,10 @@ export default function HotspotTemplates() {
             <Button type="button" variant="outline" size="sm" onClick={() => setShowVersions(true)}>
               <History size={13} /> Versions
             </Button>
-            <Button type="submit" size="sm" disabled={create.isPending}>
-              {create.isPending ? "Creating…" : "Create"}
+            <Button type="submit" size="sm" disabled={create.isPending || update.isPending}>
+              {(create.isPending || update.isPending)
+                ? (editMode ? "Updating…" : "Creating…")
+                : (editMode ? "Update" : "Create")}
             </Button>
           </div>
 
@@ -914,6 +979,12 @@ export default function HotspotTemplates() {
                 {/* ── CODE TAB ─────────────────────────────────────────────── */}
                 {tab === "code" && (
                   <div className="space-y-3">
+                    {editMode && (
+                      <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-500/25 bg-amber-500/8 text-xs text-amber-300">
+                        <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                        <span>Edit mode-এ শুধু HTML/CSS সংরক্ষিত থাকে। Visual settings (font, sections, packages) বর্তমান সংস্করণে পুনরায় সেট হবে।</span>
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <Button type="button" size="sm" variant="outline" onClick={() => setForm((p) => ({ ...p, htmlContent: buildHtml(p), cssContent: buildCss(p) }))}>
                         <Code2 size={12} /> Generate from Visual
@@ -1068,14 +1139,20 @@ p{color:#94a3b8;font-size:0.875rem}
             <div className="space-y-3">
               {/* Actions */}
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button size="sm" variant="outline"
-                    onClick={() => update.mutate({ id: previewTmpl.id, isDefault: true })}>
-                    <Check size={13} /> Set Default
+                    onClick={() => { setPreviewId(null); openEdit(previewTmpl); }}>
+                    <Pencil size={13} /> Edit
+                  </Button>
+                  <Button size="sm" variant="outline"
+                    disabled={previewTmpl.isDefault}
+                    onClick={() => setSetDefaultTarget({ id: previewTmpl.id, name: previewTmpl.name })}>
+                    <Check size={13} /> {previewTmpl.isDefault ? "Is Default" : "Set Default"}
                   </Button>
                   <Button size="sm" disabled={deploy.isPending || !selectedRouter}
+                    title={!selectedRouter ? "Select a router first" : "Upload to MikroTik router"}
                     onClick={() => deploy.mutate({ id: previewTmpl.id, routerId: selectedRouter })}>
-                    <Upload size={13} /> Publish to Router
+                    <Upload size={13} /> {deploy.isPending ? "Publishing…" : "Publish to Router"}
                   </Button>
                 </div>
                 {/* Device switcher */}
@@ -1139,6 +1216,46 @@ p{color:#94a3b8;font-size:0.875rem}
           onRestore={(f) => { setForm(f); setShowVersions(false); }}
           onClose={() => setShowVersions(false)}
         />
+      </Modal>
+
+      {/* ── Set Default Confirm Modal ─────────────────────────────────────────── */}
+      <Modal open={!!setDefaultTarget} onClose={() => setSetDefaultTarget(null)} title="Default Template সেট করুন">
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            <span className="font-bold text-foreground">{'"'}{setDefaultTarget?.name}{'"'}</span> কে default template করবেন?
+            এটি পুরানো default template-কে সরিয়ে দেবে।
+          </p>
+          <div className="flex gap-2">
+            <Button
+              className="flex-1"
+              disabled={update.isPending}
+              onClick={() => { if (setDefaultTarget) { update.mutate({ id: setDefaultTarget.id, isDefault: true }); setSetDefaultTarget(null); } }}
+            >
+              <Check size={13} className="mr-1" /> হ্যাঁ, Set Default করুন
+            </Button>
+            <Button variant="outline" onClick={() => setSetDefaultTarget(null)}>বাতিল</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Delete Confirm Modal ──────────────────────────────────────────────── */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="টেমপ্লেট মুছুন">
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-red-500/8 border border-red-500/20 text-center">
+            <p className="font-bold text-sm text-red-400">{'"'}{deleteTarget?.name}{'"'}</p>
+            <p className="text-xs text-muted-foreground mt-1">এই টেমপ্লেটটি স্থায়ীভাবে মুছে যাবে।</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="destructive" className="flex-1"
+              disabled={del.isPending}
+              onClick={() => { if (deleteTarget) del.mutate({ id: deleteTarget.id }); setDeleteTarget(null); }}
+            >
+              {del.isPending ? "Deleting…" : "হ্যাঁ, মুছুন"}
+            </Button>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>বাতিল</Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

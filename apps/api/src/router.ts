@@ -18,6 +18,15 @@ import { backupRouter } from "./routers/backup.js";
 import { settingsRouter } from "./routers/settings.js";
 import { activityRouter } from "./routers/activity.js";
 import { wirelessRouter } from "./routers/wireless.js";
+import { paymentRouter } from "./routers/payment.js";
+import { aiRouter } from "./routers/ai.js";
+import { caddyRouter } from "./routers/caddy.js";
+import { wireguardRouter } from "./routers/wireguard.js";
+import { radiusRouter } from "./routers/radius.js";
+import { systemRouter } from "./routers/system.js";
+import { resellerRouter } from "./routers/reseller.js";
+import { billingRouter } from "./routers/billing.js";
+import { performanceRouter } from "./routers/performance.js";
 
 export const appRouter = router({
   ping: publicProcedure.query(() => ({ ok: true, ts: new Date().toISOString() })),
@@ -40,6 +49,15 @@ export const appRouter = router({
   settings: settingsRouter,
   activity: activityRouter,
   wireless: wirelessRouter,
+  payment: paymentRouter,
+  ai: aiRouter,
+  caddy: caddyRouter,
+  wireguard: wireguardRouter,
+  radius: radiusRouter,
+  system: systemRouter,
+  reseller: resellerRouter,
+  billing: billingRouter,
+  performance: performanceRouter,
 });
 
 export type AppRouter = typeof appRouter;

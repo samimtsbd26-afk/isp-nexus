@@ -49,11 +49,11 @@
             <h2>Connection Status</h2>
 
             <div style="text-align: center; margin-bottom: 20px;">
-                <div style="width: 80px; height: 80px; border-radius: 50%; background: rgba(0,255,102,0.1); border: 2px solid var(--green); display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; box-shadow: 0 0 20px rgba(0,255,102,0.2);">
+                <div class="status-circle status-circle--ok">
                     CONNECTED
                 </div>
-                <h3 style="color: var(--green);">CONNECTED</h3>
-                <p style="font-size: 0.8rem; color: var(--text-muted);">Welcome, $(username)</p>
+                <h3 class="status-headline-ok">CONNECTED</h3>
+                <p class="helper-muted">Welcome, $(username)</p>
             </div>
 
             <form action="$(link-logout)" name="logout" onSubmit="return openLogout()">
@@ -74,6 +74,18 @@
                         <th> Connected</th>
                         <td>$(uptime)</td>
                     </tr>
+                    <!-- $(if comment) -->
+                    <tr>
+                        <th> Plan</th>
+                        <td>$(comment)</td>
+                    </tr>
+                    <!-- $(endif) -->
+                    <!-- $(if profile) -->
+                    <tr>
+                        <th> Profile</th>
+                        <td>$(profile)</td>
+                    </tr>
+                    <!-- $(endif) -->
                     <!-- $(if limit-uptime) -->
                     <tr>
                         <th> Remaining</th>
@@ -82,7 +94,7 @@
                     <!-- $(endif) -->
                     <!-- $(if session-time-left) -->
                     <tr>
-                        <th> Time Left</th>
+                        <th> Expires in</th>
                         <td>$(session-time-left)</td>
                     </tr>
                     <!-- $(endif) -->
@@ -100,7 +112,7 @@
                     <!-- $(endif) -->
                 </table>
 
-                <button type="submit" class="auth-btn" style="background: linear-gradient(90deg, #ff416c 0%, #ff4b2b 100%);">LOGOUT</button>
+                <button type="submit" class="auth-btn auth-btn-danger">LOGOUT</button>
             </form>
         </div>
 

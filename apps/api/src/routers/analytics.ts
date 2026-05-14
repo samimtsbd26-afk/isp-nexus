@@ -1,6 +1,8 @@
 import { sql, eq, gte, and, isNull } from "drizzle-orm";
 import { router, authedProcedure } from "../middleware.js";
 import { orders, customers, subscriptions, packages, routers } from "@isp-nexus/db";
+import { connectRouter } from "../lib/mikrotik.js";
+import { logger } from "../lib/logger.js";
 
 export const analyticsRouter = router({
   dashboard: authedProcedure.query(async ({ ctx }) => {
@@ -173,5 +175,66 @@ export const analyticsRouter = router({
       .groupBy(packages.id, packages.name, packages.type)
       .orderBy(sql`count(*) desc`)
       .limit(10);
+  }),
+
+  // ── Network map — all routers with live MikroTik stats ────────────────────
+
+  networkMap: authedProcedure.query(async ({ ctx }) => {
+    const routerList = await ctx.db.select().from(routers).where(eq(routers.orgId, ctx.orgId));
+
+    const results = await Promise.allSettled(
+      routerList.map(async (r) => {
+        const base = {
+          id: r.id,
+          name: r.name,
+          host: r.host,
+          model: r.model,
+          rosVersion: r.rosVersion,
+          isActive: r.isActive,
+          isDefault: r.isDefault,
+          cpuLoad: r.cpuLoad,
+          freeMemoryMb: r.freeMemoryMb,
+          temperatureCelsius: r.temperatureCelsius,
+          uptimeSeconds: r.uptimeSeconds,
+          lastSeenAt: r.lastSeenAt,
+          activeUsers: 0,
+          rxMbps: 0,
+          txMbps: 0,
+          liveError: null as string | null,
+        };
+        if (!r.isActive) return base;
+        try {
+          const client = await connectRouter(r);
+          try {
+            const [ifaces, hotspotActive] = await Promise.allSettled([
+              client.print("/interface"),
+              client.print("/ip/hotspot/active"),
+            ]);
+            if (ifaces.status === "fulfilled") {
+              let rx = 0, tx = 0;
+              for (const iface of (ifaces.value as any[])) {
+                rx += parseInt((iface as any)["rx-bits-per-second"] ?? "0", 10);
+                tx += parseInt((iface as any)["tx-bits-per-second"] ?? "0", 10);
+              }
+              base.rxMbps = Math.round(rx / 1_000_000 * 10) / 10;
+              base.txMbps = Math.round(tx / 1_000_000 * 10) / 10;
+            }
+            if (hotspotActive.status === "fulfilled") {
+              base.activeUsers = (hotspotActive.value as any[]).length;
+            }
+          } finally {
+            await client.close().catch(() => {});
+          }
+        } catch (err: any) {
+          base.liveError = err?.message ?? "Connection failed";
+          logger.debug({ err, routerId: r.id }, "networkMap: router live stats fetch failed");
+        }
+        return base;
+      }),
+    );
+
+    return results.map((r) =>
+      r.status === "fulfilled" ? r.value : { id: "", name: "Unknown", liveError: String((r as PromiseRejectedResult).reason), isActive: false, host: "", model: null, rosVersion: null, isDefault: false, cpuLoad: null, freeMemoryMb: null, temperatureCelsius: null, uptimeSeconds: null, lastSeenAt: null, activeUsers: 0, rxMbps: 0, txMbps: 0 },
+    );
   }),
 });

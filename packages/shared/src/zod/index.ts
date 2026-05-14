@@ -55,7 +55,8 @@ export const createPackageSchema = z.object({
   burstThresholdUp: z.number().int().optional(),
   burstTimeSeconds: z.number().int().optional(),
   priceBdt: z.number().int().nonnegative(),
-  validityDays: z.number().int().positive().default(30),
+  durationValue: z.number().int().positive().default(30),
+  durationUnit: z.enum(["hour", "day"]).default("day"),
   radiusGroupName: z.string().optional(),
   mikrotikProfileName: z.string().optional(),
   description: z.string().optional(),
@@ -170,4 +171,11 @@ export const trialRegisterSchema = z.object({
   fullName: z.string().min(2).max(255),
   phone: z.string().min(10).max(20),
   password: z.string().min(6),
+});
+
+export const redeemVoucherSchema = z.object({
+  code: z.string().min(4).max(50),
+  orgId: z.string().uuid().optional(),
+  mac: z.string().optional(),
+  ip: z.string().optional(),
 });

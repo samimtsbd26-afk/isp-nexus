@@ -2,15 +2,9 @@
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { CheckCircle, XCircle, RefreshCw, AlertTriangle, Zap } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, Button, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Empty, Modal, Input } from "../components/ui/index";
+import { Card, CardContent, CardHeader, CardTitle, Button, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Empty, Modal, Input, OrderStatusBadge, PaymentMethodBadge } from "../components/ui/index";
 import { onEvent } from "../lib/socket";
 
-function StatusBadge({ status }: Readonly<{ status: string }>) {
-  const map: Record<string, "warning" | "success" | "destructive" | "default"> = {
-    pending: "warning", approved: "success", rejected: "destructive", refunded: "default",
-  };
-  return <Badge variant={map[status] ?? "default"}>{status}</Badge>;
-}
 
 function OrderSkeleton() {
   return (
@@ -128,50 +122,50 @@ export default function Orders() {
 
           {/* Data state */}
           {!isLoading && !error && orders.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Method</TableHead>
-                  <TableHead>Trx ID</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="w-32">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orders.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell><StatusBadge status={o.status} /></TableCell>
-                    <TableCell className="text-sm">
-                      {o.customerId ? `${o.customerId.slice(0, 8)}…` : "Guest"}
-                    </TableCell>
-                    <TableCell className="font-semibold">৳{o.amountBdt?.toLocaleString() ?? "—"}</TableCell>
-                    <TableCell><Badge variant="outline">{o.paymentMethod ?? "—"}</Badge></TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{o.trxId ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-BD") : "—"}
-                    </TableCell>
-                    <TableCell>
-                      {o.status === "pending" && (
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="ghost" className="text-emerald-400 hover:text-emerald-300"
-                            disabled={approve.isPending}
-                            onClick={() => approve.mutate({ id: o.id })}>
-                            <CheckCircle size={14} />
-                          </Button>
-                          <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-300"
-                            onClick={() => { setNoteId(o.id); setNote(""); }}>
-                            <XCircle size={14} />
-                          </Button>
-                        </div>
-                      )}
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Sender</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Trx ID</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="w-44">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {orders.map((o) => (
+                    <TableRow key={o.id}>
+                      <TableCell><OrderStatusBadge status={o.status} /></TableCell>
+                      <TableCell className="font-mono text-xs">{o.paymentFrom ?? "—"}</TableCell>
+                      <TableCell><PaymentMethodBadge method={o.paymentMethod} /></TableCell>
+                      <TableCell className="font-semibold">৳{o.amountBdt?.toLocaleString() ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{o.trxId ?? "—"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {o.createdAt ? new Date(o.createdAt).toLocaleDateString("en-BD") : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {o.status === "pending" && (
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" className="text-emerald-400 hover:text-emerald-300 text-xs"
+                              disabled={approve.isPending}
+                              onClick={() => approve.mutate({ id: o.id })}>
+                              <CheckCircle size={12} className="mr-1" /> Approve
+                            </Button>
+                            <Button size="sm" variant="ghost" className="text-red-400 hover:text-red-300 text-xs"
+                              onClick={() => { setNoteId(o.id); setNote(""); }}>
+                              <XCircle size={12} className="mr-1" /> Reject
+                            </Button>
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           ) : (
             !isLoading && !error && <Empty message={tab === "pending" ? "No pending orders — great!" : "No orders found"} />
           )}

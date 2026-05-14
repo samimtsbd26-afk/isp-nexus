@@ -8,6 +8,7 @@ import {
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, BarChart, Bar, PieChart, Pie, Cell, Legend,
+  LineChart, Line,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle, StatCard, Badge } from "../components/ui/index";
 import { Link } from "react-router";
@@ -95,10 +96,16 @@ export default function Dashboard() {
   const { data: revenue } = trpc.analytics.revenue.useQuery(undefined, {
     refetchInterval: 60_000,
   });
+  const { data: hotspotRevenue } = trpc.settings.revenueAnalytics.useQuery(undefined, {
+    refetchInterval: 60_000,
+  });
   const { data: recentOrders } = trpc.analytics.recentOrders.useQuery(undefined, {
     refetchInterval: 15_000,
   });
   const { data: subsByPkg } = trpc.analytics.subscriptionsByPackage.useQuery();
+  const { data: growth } = trpc.analytics.customerGrowth.useQuery(undefined, {
+    refetchInterval: 300_000,
+  });
 
   // Live MikroTik stats for the first active router
   const firstRouterId = stats?.routerList?.find((r) => r.isActive)?.id;
@@ -350,8 +357,8 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Revenue Chart + Routers */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Revenue Chart + Growth + Routers */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Revenue Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -400,6 +407,31 @@ export default function Dashboard() {
             ) : (
               <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">
                 No revenue data yet — approve some orders first
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Customer Growth */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle>Customer Growth (90d)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {growth && growth.length > 0 ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={growth}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                    tickFormatter={(d) => { const dt = new Date(d); return `${dt.getDate()}/${dt.getMonth() + 1}`; }} />
+                  <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
+                  <Line type="monotone" dataKey="count" stroke="#10b981" strokeWidth={2} dot={false} name="New Customers" />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-[220px] flex items-center justify-center text-muted-foreground text-sm">
+                No growth data yet
               </div>
             )}
           </CardContent>
@@ -528,6 +560,34 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {/* Hotspot Revenue Snapshot */}
+      {hotspotRevenue && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Hotspot Revenue</h2>
+            <Link to="/incidents" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+              Incidents →
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            {[
+              { label: "Today", value: `৳${hotspotRevenue.todayBdt.toLocaleString()}`, color: "text-emerald-400" },
+              { label: "This Week", value: `৳${hotspotRevenue.weekBdt.toLocaleString()}`, color: "text-blue-400" },
+              { label: "This Month", value: `৳${hotspotRevenue.monthBdt.toLocaleString()}`, color: "text-purple-400" },
+              { label: "Pending", value: String(hotspotRevenue.pendingCount), color: hotspotRevenue.pendingCount > 0 ? "text-amber-400" : "text-muted-foreground" },
+              { label: "Churn (30d)", value: String(hotspotRevenue.churnLast30), color: hotspotRevenue.churnLast30 > 0 ? "text-red-400" : "text-muted-foreground" },
+              { label: "Trials", value: String(hotspotRevenue.trialTotal), color: "text-cyan-400" },
+              { label: "Trial → Paid", value: `${hotspotRevenue.trialConversionPct}%`, color: hotspotRevenue.trialConversionPct >= 50 ? "text-emerald-400" : "text-amber-400" },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="rounded-xl border border-border bg-card p-3 text-center">
+                <p className={`text-lg font-bold ${color}`}>{value}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Expired Subscriptions Alert */}
       {(stats?.expiredSubs ?? 0) > 0 && (
         <div className="flex items-center gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5">
@@ -541,7 +601,7 @@ export default function Dashboard() {
             </p>
           </div>
           <Link
-            to="/subscriptions"
+            to="/customers"
             className="text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors shrink-0"
           >
             View →

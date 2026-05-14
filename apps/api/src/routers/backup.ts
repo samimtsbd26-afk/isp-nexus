@@ -3,15 +3,13 @@ import { TRPCError } from "@trpc/server";
 import { eq, and, desc } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { routers, backupConfigs } from "@isp-nexus/db";
-import { decryptText } from "../lib/crypto.js";
-import { getMikroTikClient, type MikroTikApi } from "../services/mikrotik/client.js";
+import { connectRouter } from "../lib/mikrotik.js";
 
 async function getRouterAndClient(db: any, orgId: string, routerId: string) {
   const [r] = await db.select().from(routers)
     .where(and(eq(routers.id, routerId), eq(routers.orgId, orgId))).limit(1);
   if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
-  const password = decryptText(r.passwordEncrypted);
-  const client = await getMikroTikClient({ host: r.host, port: r.port, username: r.username, password, useSsl: r.useSsl });
+  const client = await connectRouter(r);
   return { client, router: r };
 }
 
@@ -92,5 +90,20 @@ export const backupRouter = router({
     await ctx.db.delete(backupConfigs)
       .where(and(eq(backupConfigs.id, input.id), eq(backupConfigs.orgId, ctx.orgId)));
     return { ok: true };
+  }),
+
+  // ── Database backups (Postgres + Redis) ───────────────────────────────────
+
+  runDbBackup: adminProcedure
+    .input(z.object({ type: z.enum(["postgres", "redis"]) }))
+    .mutation(async ({ input }) => {
+      const { runPostgresBackup, runRedisBackup } = await import("../services/backup/database.js");
+      if (input.type === "postgres") return runPostgresBackup();
+      return runRedisBackup();
+    }),
+
+  listDbBackups: adminProcedure.query(async () => {
+    const { getBackupHistory } = await import("../services/backup/database.js");
+    return getBackupHistory();
   }),
 });

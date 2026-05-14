@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
-    restart: unless-stopped
+    restart: on-failure
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-isp_nexus_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-isp_nexus}
@@ -40,6 +40,10 @@ services:
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@skynity.org}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://admin.skynity.org,https://wifi.skynity.org,https://hotspot.skynity.org}
+      PORTAL_JWT_EXPIRES: ${PORTAL_JWT_EXPIRES:-7d}
+      CADDY_ADMIN_URL: http://caddy:2019
+      SSL_EMAIL: ${SSL_EMAIL:-admin@skynity.org}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,6 +51,9 @@ services:
         condition: service_healthy
       db-migrator:
         condition: service_completed_successfully
+    ports:
+      # Local health checks / dev: matches docs `curl http://localhost:8787/api/health`
+      - "127.0.0.1:8787:3001"
     networks:
       - isp-net
     healthcheck:
@@ -56,6 +63,8 @@ services:
       retries: 3
       start_period: 30s
 
+  # Canonical SQL migrations: runs packages/db/migrations then syncs drizzle.__drizzle_migrations
+  # so drizzle-kit/host db:migrate does not replay finished migrations.
   db-migrator:
     build:
       context: .
@@ -132,11 +141,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     command: >
       redis-server
       --requirepass "${REDIS_PASSWORD:-}"
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --save 60 1
     volumes:
       - redis_data:/data

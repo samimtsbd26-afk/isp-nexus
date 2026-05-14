@@ -57,7 +57,7 @@ export async function signPortalToken(payload: PortalSessionPayload): Promise<st
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("7d")
+    .setExpirationTime(env.PORTAL_JWT_EXPIRES)
     .sign(PORTAL_SECRET);
 }
 

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Redirecting...</title>
+</head>
+<body>
+<script>
+(function(){
+  var params = new URLSearchParams(location.search);
+  var dst = params.get('dst') || params.get('orig') || '';
+  if(dst && /^https?:\/\//.test(dst)){
+    location.replace(dst);
+  } else {
+    fetch('/api/portal/hotspot-config')
+      .then(function(r){return r.json();})
+      .then(function(cfg){
+        var base = (cfg.portalUrl || '').replace(/\/$/, '');
+        if(!base) base = location.protocol + '//' + location.hostname.replace('hotspot.','wifi.');
+        location.replace(base);
+      })
+      .catch(function(){
+        var fallback = location.protocol + '//' + location.hostname.replace('hotspot.','wifi.');
+        location.replace(fallback);
+      });
+  }
+})();
+</script>
+</body>
+</html>

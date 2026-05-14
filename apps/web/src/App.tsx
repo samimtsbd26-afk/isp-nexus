@@ -19,8 +19,6 @@ import Monitoring from "./pages/monitoring/Monitoring";
 import BandwidthMonitor from "./pages/monitoring/Bandwidth";
 import PingMonitor from "./pages/monitoring/Ping";
 import SfpMonitor from "./pages/monitoring/Sfp";
-import Interfaces from "./pages/Interfaces";
-import Neighbors from "./pages/Neighbors";
 
 // Users / Network
 import PppoeUsers from "./pages/PppoeUsers";
@@ -30,32 +28,37 @@ import Queues from "./pages/Queues";
 
 // Network config
 import Firewall from "./pages/Firewall";
-import IpAddresses from "./pages/IpAddresses";
-import RoutesPage from "./pages/Routes";
 import WireGuard from "./pages/WireGuard";
 
 // ISP Portal
 import Customers from "./pages/Customers";
 import CustomerDetail from "./pages/CustomerDetail";
-import Subscriptions from "./pages/Subscriptions";
 import Packages from "./pages/Packages";
 import Orders from "./pages/Orders";
 import Invoices from "./pages/Invoices";
 import Vouchers from "./pages/Vouchers";
 import Support from "./pages/Support";
 
+// ISP Scale
+import Resellers from "./pages/Resellers";
+import BillingAutomation from "./pages/BillingAutomation";
+import Performance from "./pages/Performance";
+
 // Analytics & Tools
-import Analytics from "./pages/Analytics";
 import TelegramSettings from "./pages/Telegram";
 
 // System
 import SystemLogs from "./pages/SystemLogs";
 import Backup from "./pages/Backup";
-import HotspotTemplates from "./pages/HotspotTemplates";
 import Users from "./pages/Users";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
+import HotspotSettings from "./pages/HotspotSettings";
+import HotspotDebug from "./pages/HotspotDebug";
+import Incidents from "./pages/Incidents";
 import WirelessControl from "./pages/monitoring/WirelessControl";
+import NetworkMap from "./pages/NetworkMap";
+import NocWallboard from "./pages/NocWallboard";
 
 function RequireAuth({ children }: Readonly<{ children: React.ReactNode }>) {
   const location = useLocation();
@@ -77,7 +80,11 @@ function RequireAuth({ children }: Readonly<{ children: React.ReactNode }>) {
   }, []);
 
   if (state === "checking") {
-    return <div className="min-h-screen bg-background" />;
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground animate-pulse">Loading session…</p>
+      </div>
+    );
   }
   return state === "authed" ? <>{children}</> : <Navigate to="/login" replace state={{ from: location.pathname }} />;
 }
@@ -114,7 +121,7 @@ export default function App() {
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
-        <Toaster richColors theme="dark" position="top-right" />
+        <Toaster richColors theme="light" position="top-right" />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/setup" element={<Setup />} />
@@ -130,8 +137,7 @@ export default function App() {
             <Route path="monitoring/ping" element={<PingMonitor />} />
             <Route path="monitoring/sfp" element={<SfpMonitor />} />
             <Route path="monitoring/wireless" element={<WirelessControl />} />
-            <Route path="interfaces" element={<Interfaces />} />
-            <Route path="neighbors" element={<Neighbors />} />
+            <Route path="network-map" element={<NetworkMap />} />
 
             {/* Users */}
             <Route path="pppoe" element={<PppoeUsers />} />
@@ -141,31 +147,40 @@ export default function App() {
 
             {/* Network */}
             <Route path="firewall" element={<Firewall />} />
-            <Route path="ip" element={<IpAddresses />} />
-            <Route path="routes" element={<RoutesPage />} />
+            <Route path="ip" element={<Navigate to="/routers" replace />} />
+            <Route path="routes" element={<Navigate to="/routers" replace />} />
             <Route path="wireguard" element={<WireGuard />} />
+            <Route path="interfaces" element={<Navigate to="/routers" replace />} />
+            <Route path="neighbors" element={<Navigate to="/routers" replace />} />
 
             {/* ISP Portal */}
             <Route path="customers" element={<Customers />} />
             <Route path="customers/:id" element={<CustomerDetail />} />
-            <Route path="subscriptions" element={<Subscriptions />} />
+            <Route path="subscriptions" element={<Navigate to="/customers" replace />} />
             <Route path="packages" element={<Packages />} />
             <Route path="orders" element={<Orders />} />
+            <Route path="payments" element={<Navigate to="/orders" replace />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="vouchers" element={<Vouchers />} />
             <Route path="support" element={<Support />} />
+            <Route path="resellers" element={<Resellers />} />
+            <Route path="billing-automation" element={<BillingAutomation />} />
 
             {/* Analytics */}
-            <Route path="analytics" element={<Analytics />} />
+            <Route path="analytics" element={<Navigate to="/" replace />} />
             <Route path="telegram" element={<TelegramSettings />} />
 
             {/* System */}
             <Route path="system-logs" element={<SystemLogs />} />
             <Route path="backup" element={<Backup />} />
-            <Route path="hotspot/templates" element={<HotspotTemplates />} />
+            <Route path="performance" element={<Performance />} />
             <Route path="activity" element={<Activity />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="hotspot-settings" element={<HotspotSettings />} />
+            <Route path="hotspot-debug" element={<HotspotDebug />} />
+            <Route path="incidents" element={<Incidents />} />
             <Route path="users" element={<Users />} />
+            <Route path="noc" element={<NocWallboard />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

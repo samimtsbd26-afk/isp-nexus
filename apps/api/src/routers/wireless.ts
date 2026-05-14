@@ -3,8 +3,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { routers, wirelessAps, wirelessScans, telegramConfigs } from "@isp-nexus/db";
-import { decryptText } from "../lib/crypto.js";
-import { getMikroTikClient } from "../services/mikrotik/client.js";
+import { connectRouter, type MikroTikApi } from "../lib/mikrotik.js";
 import { logger } from "../lib/logger.js";
 import { sendAlert } from "../services/telegram/bot.js";
 import { logActivity } from "../lib/activity.js";
@@ -67,11 +66,9 @@ export const wirelessRouter = router({
 
     let synced = 0;
     for (const r of allRouters) {
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         const [ifaces, resources, registrations] = await Promise.all([
           client.print("/interface/wireless").catch(() => []),
@@ -152,17 +149,15 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         // Backup current wireless settings before scan
         const currentIface = await client.print("/interface/wireless", { name: input.interfaceName }).catch(() => []);
 
         const scanResults = await client.exec("/interface/wireless", "scan", {
-          ".id": currentIface[0]?.[".id"] ?? "*0",
+          ".id": currentIface[0]?.id ?? "*0",
           duration: "3",
         }).catch(() => []);
 
@@ -227,11 +222,9 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         const [iface] = await client.print("/interface/wireless", { name: input.interfaceName }).catch(() => [undefined]);
         if (!iface) throw new TRPCError({ code: "NOT_FOUND", message: "Wireless interface not found on router" });
@@ -245,7 +238,7 @@ export const wirelessRouter = router({
         });
 
         await client.exec("/interface/wireless", "set", {
-          ".id": iface[".id"],
+          ".id": iface.id,
           channel: input.channel,
           ...(input.frequency ? { frequency: String(input.frequency) } : {}),
         });
@@ -268,17 +261,15 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         const [iface] = await client.print("/interface/wireless", { name: input.interfaceName }).catch(() => [undefined]);
         if (!iface) throw new TRPCError({ code: "NOT_FOUND", message: "Wireless interface not found" });
 
         await client.exec("/interface/wireless", "set", {
-          ".id": iface[".id"],
+          ".id": iface.id,
           "tx-power": String(input.txPower),
           "tx-power-mode": "card-rates",
         });
@@ -302,11 +293,9 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "reboot", "router", input.routerId, {});
 
@@ -330,19 +319,17 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         const [iface] = await client.print("/interface/wireless", { name: input.interfaceName }).catch(() => [undefined]);
         if (!iface) throw new TRPCError({ code: "NOT_FOUND", message: "Wireless interface not found" });
 
         if (input.enabled) {
-          await client.exec("/interface/wireless", "enable", { ".id": iface[".id"] });
+          await client.exec("/interface/wireless", "enable", { ".id": iface.id });
         } else {
-          await client.exec("/interface/wireless", "disable", { ".id": iface[".id"] });
+          await client.exec("/interface/wireless", "disable", { ".id": iface.id });
         }
 
         await logActivity(ctx.db, ctx.orgId, ctx.user?.id, input.enabled ? "enable" : "disable", "wireless_interface", input.routerId, {
@@ -363,11 +350,9 @@ export const wirelessRouter = router({
         .where(and(eq(routers.id, input.routerId), eq(routers.orgId, ctx.orgId))).limit(1);
       if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
-      let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+      let client: MikroTikApi | null = null;
       try {
-        const password = decryptText(r.passwordEncrypted);
-        const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-        client = await getMikroTikClient({ host: r.host, port, username: r.username, password, useSsl: r.useSsl });
+        client = await connectRouter(r);
 
         const regs = await client.print("/interface/wireless/registration-table").catch(() => []);
 

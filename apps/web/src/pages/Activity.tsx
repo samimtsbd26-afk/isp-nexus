@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { trpc } from "../lib/trpc";
 import { ScrollText, User, ChevronDown } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Select, Empty } from "../components/ui/index";
+import { Card, CardContent, CardHeader, CardTitle, Badge, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Dropdown, Empty } from "../components/ui/index";
 
 const ENTITY_TYPES = ["", "customer", "subscription", "order", "invoice", "router", "user", "package", "voucher"];
 
@@ -32,11 +32,9 @@ export default function Activity() {
           <h1 className="text-xl font-bold">Activity Log</h1>
           <p className="text-muted-foreground text-sm">Full audit trail of all actions</p>
         </div>
-        <Select title="Entity Type" value={entityType} onChange={(e) => setEntityType(e.target.value)} className="w-44">
-          {ENTITY_TYPES.map((t) => (
-            <option key={t} value={t}>{t || "All Types"}</option>
-          ))}
-        </Select>
+        <Dropdown title="Entity Type" value={entityType} onChange={setEntityType} className="w-44"
+          options={ENTITY_TYPES.map((t) => ({ value: t, label: t || "All Types" }))}
+        />
       </div>
 
       <Card>

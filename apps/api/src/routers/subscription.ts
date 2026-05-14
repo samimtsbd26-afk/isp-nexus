@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, desc } from "drizzle-orm";
 import { router, authedProcedure, adminProcedure } from "../middleware.js";
 import { subscriptions, customers, packages, routers } from "@isp-nexus/db";
-import { createSubscriptionSchema } from "@isp-nexus/shared";
-import { encryptText, decryptText } from "../lib/crypto.js";
-import { getMikroTikClient } from "../services/mikrotik/client.js";
+import { createSubscriptionSchema, packageActivationDurationSeconds } from "@isp-nexus/shared";
+import { encryptText } from "../lib/crypto.js";
+import { connectRouter, setMikroTikUserDisabled } from "../lib/mikrotik.js";
 import { logActivity } from "../lib/activity.js";
+import { logger } from "../lib/logger.js";
 
 export const subscriptionRouter = router({
   list: authedProcedure
@@ -20,13 +21,19 @@ export const subscriptionRouter = router({
       const conditions: any[] = [eq(subscriptions.orgId, ctx.orgId), isNull(subscriptions.deletedAt)];
       if (input.customerId) conditions.push(eq(subscriptions.customerId, input.customerId));
       if (input.status) conditions.push(eq(subscriptions.status, input.status as any));
-      return ctx.db.select({
+      const rows = await ctx.db.select({
         id: subscriptions.id, username: subscriptions.username, status: subscriptions.status,
         startedAt: subscriptions.startedAt, expiresAt: subscriptions.expiresAt,
         customerId: subscriptions.customerId, packageId: subscriptions.packageId,
         routerId: subscriptions.routerId, ipAddress: subscriptions.ipAddress,
-        autoRenew: subscriptions.autoRenew, deletedAt: subscriptions.deletedAt,
-      }).from(subscriptions).where(and(...conditions)).limit(input.limit).offset(input.offset);
+        macAddress: subscriptions.macAddress, autoRenew: subscriptions.autoRenew,
+        deletedAt: subscriptions.deletedAt,
+        routerName: routers.name,
+      }).from(subscriptions)
+        .leftJoin(routers, eq(subscriptions.routerId, routers.id))
+        .where(and(...conditions))
+        .limit(input.limit).offset(input.offset);
+      return rows;
     }),
 
   get: authedProcedure.input(z.object({ id: z.string().uuid() })).query(async ({ ctx, input }) => {
@@ -34,7 +41,13 @@ export const subscriptionRouter = router({
       .where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId))).limit(1);
     if (!s) throw new TRPCError({ code: "NOT_FOUND" });
     const { passwordEncrypted: _, ...safe } = s;
-    return safe;
+    let router = null;
+    if (s.routerId) {
+      const [r] = await ctx.db.select({ id: routers.id, name: routers.name, host: routers.host }).from(routers)
+        .where(eq(routers.id, s.routerId)).limit(1);
+      router = r ?? null;
+    }
+    return { ...safe, router };
   }),
 
   create: adminProcedure.input(createSubscriptionSchema).mutation(async ({ ctx, input }) => {
@@ -49,25 +62,25 @@ export const subscriptionRouter = router({
     if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "Router not found" });
 
     const passwordEncrypted = encryptText(input.password);
+    const activatedMs = packageActivationDurationSeconds(pkg) * 1000;
     const [s] = await ctx.db.insert(subscriptions).values({
       orgId: ctx.orgId, customerId: input.customerId, packageId: input.packageId,
       routerId: input.routerId, username: input.username, passwordEncrypted,
       ipAddress: input.ipAddress, macAddress: input.macAddress, notes: input.notes,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + activatedMs),
     }).returning();
 
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "create", "subscription", s.id, { username: input.username, packageId: input.packageId });
 
     if (r && pkg) {
-      let password: string;
+      let client;
       try {
-        password = decryptText(r.passwordEncrypted);
+        client = await connectRouter(r);
       } catch (decryptErr) {
-        console.warn("Router password decrypt failed, skipping MikroTik provision", decryptErr);
+        logger.warn({ err: decryptErr }, "Router password decrypt failed, skipping MikroTik provision");
         return s;
       }
       try {
-        const client = await getMikroTikClient({ host: r.host, port: r.port, username: r.username, password, useSsl: r.useSsl });
         if (pkg.type === "pppoe") {
           const addData: Record<string, string> = {
             name: input.username, password: input.password,
@@ -81,22 +94,34 @@ export const subscriptionRouter = router({
             profile: pkg.mikrotikProfileName ?? "default",
           });
         }
-        await client.close();
       } catch (err) { /* MikroTik provision error — subscription still created */ }
+      finally { await client.close().catch(() => {}); }
     }
     return s;
   }),
 
   suspend: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
+    const [sub] = await ctx.db.select({ id: subscriptions.id, routerId: subscriptions.routerId, username: subscriptions.username })
+      .from(subscriptions).where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+    if (!sub) throw new TRPCError({ code: "NOT_FOUND" });
     await ctx.db.update(subscriptions).set({ status: "suspended", updatedAt: new Date() })
       .where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId)));
+    if (sub.routerId) {
+      await setMikroTikUserDisabled(ctx.db, ctx.orgId, sub.routerId, sub.username, true).catch(() => {});
+    }
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "suspend", "subscription", input.id, {});
     return { ok: true };
   }),
 
   reactivate: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
+    const [sub] = await ctx.db.select({ id: subscriptions.id, routerId: subscriptions.routerId, username: subscriptions.username })
+      .from(subscriptions).where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+    if (!sub) throw new TRPCError({ code: "NOT_FOUND" });
     await ctx.db.update(subscriptions).set({ status: "active", updatedAt: new Date() })
       .where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId)));
+    if (sub.routerId) {
+      await setMikroTikUserDisabled(ctx.db, ctx.orgId, sub.routerId, sub.username, false).catch(() => {});
+    }
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "enable", "subscription", input.id, {});
     return { ok: true };
   }),
@@ -109,18 +134,21 @@ export const subscriptionRouter = router({
   }),
 
   delete: adminProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
-    const [sub] = await ctx.db.select({ id: subscriptions.id }).from(subscriptions)
-      .where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId))).limit(1);
+    const [sub] = await ctx.db.select({ id: subscriptions.id, routerId: subscriptions.routerId, username: subscriptions.username })
+      .from(subscriptions).where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId))).limit(1);
     if (!sub) throw new TRPCError({ code: "NOT_FOUND" });
-    
-    // Soft delete only
+
     await ctx.db.update(subscriptions).set({
       deletedAt: new Date(),
       deletedBy: ctx.user?.id,
       status: "cancelled",
       updatedAt: new Date(),
     }).where(and(eq(subscriptions.id, input.id), eq(subscriptions.orgId, ctx.orgId)));
-    
+
+    if (sub.routerId) {
+      await setMikroTikUserDisabled(ctx.db, ctx.orgId, sub.routerId, sub.username, true).catch(() => {});
+    }
+
     await logActivity(ctx.db, ctx.orgId, ctx.user?.id, "delete", "subscription", input.id, {});
     return { ok: true };
   }),

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { Wifi, Eye, EyeOff, ChevronRight } from "lucide-react";
-import { api, type GuestOrderInput } from "../lib/api";
+import { api, type GuestOrderInput, type TrialRegisterInput } from "../lib/api";
+import { trpcParseResponse, trpcSerializeWire } from "../lib/trpc-wire";
 
 const ORG_ID = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_ORG_ID ?? "212d7393-7375-4321-93f5-4789deb8b317";
 
@@ -24,22 +25,38 @@ export default function Register() {
     setLoading(true);
     try {
       if (isTrial && packageId) {
-        const input: GuestOrderInput = { fullName: form.fullName, phone: form.phone, password: form.password, packageId, paymentMethod: "free", isTrial: true };
-        const result = await api.guestOrder(input);
-        if (result?.token) {
-          localStorage.setItem("isp_portal_token", result.token);
-          toast.success("Trial activated! Enjoy free internet 🎉");
-          navigate("/");
-        } else {
-          toast.success("Registration successful!");
-          navigate("/login");
-        }
+        const mac = searchParams.get("mac") ?? undefined;
+        const input: TrialRegisterInput = {
+          fullName: form.fullName,
+          phone: form.phone,
+          password: form.password,
+          packageId,
+          macAddress: mac,
+          ipAddress: undefined,
+          userAgent: navigator.userAgent,
+        };
+        const result = await api.trialRegister(input);
+        // Store pending state for polling on /pending page
+        localStorage.setItem("isp_pending_order", JSON.stringify({ orderId: result.orderId, phone: form.phone }));
+        toast.success("আবেদন গ্রহণ করা হয়েছে! Admin approval এর অপেক্ষা করুন।");
+        navigate("/pending");
       } else if (packageId) {
-        const res = await fetch("/api/trpc/portal.register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ json: { orgId: ORG_ID, fullName: form.fullName, phone: form.phone, email: form.email || undefined, username: form.phone, password: form.password } }) });
-        const data = await res.json();
-        const token = data?.result?.data?.json?.token;
-        if (token) { localStorage.setItem("isp_portal_token", token); navigate(`/payment?packageId=${packageId}`); }
-        else toast.error(data?.error?.message ?? "Registration failed");
+        const res = await fetch("/api/trpc/portal.register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: trpcSerializeWire({
+            orgId: ORG_ID,
+            fullName: form.fullName,
+            phone: form.phone,
+            email: form.email || undefined,
+            username: form.phone,
+            password: form.password,
+          }),
+        });
+        const data = (await res.json()) as Record<string, unknown>;
+        const parsed = trpcParseResponse<{ token?: string }>(data);
+        if (parsed.token) { localStorage.setItem("isp_portal_token", parsed.token); navigate(`/payment?packageId=${packageId}`); }
+        else toast.error("Registration failed");
       } else {
         const result = await api.register({ fullName: form.fullName, phone: form.phone, email: form.email || undefined, password: form.password, username: form.phone });
         if (result?.token) { localStorage.setItem("isp_portal_token", result.token); toast.success("Welcome to SKYNITY! 🎉"); navigate("/"); }

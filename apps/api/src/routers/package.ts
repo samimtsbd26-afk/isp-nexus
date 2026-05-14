@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { eq, and } from "drizzle-orm";
 import { router, publicProcedure, authedProcedure, adminProcedure } from "../middleware.js";
 import { packages } from "@isp-nexus/db";
-import { createPackageSchema } from "@isp-nexus/shared";
+import { createPackageSchema, derivedValidityDays } from "@isp-nexus/shared";
 
 export const packageRouter = router({
   list: publicProcedure.input(z.object({ orgId: z.string().uuid().optional() })).query(async ({ ctx, input }) => {
@@ -23,15 +23,20 @@ export const packageRouter = router({
   }),
 
   create: adminProcedure.input(createPackageSchema).mutation(async ({ ctx, input }) => {
-    const [p] = await ctx.db.insert(packages).values({ orgId: ctx.orgId, ...input }).returning();
+    const validityDays = derivedValidityDays(input.durationValue, input.durationUnit);
+    const [p] = await ctx.db.insert(packages).values({ orgId: ctx.orgId, ...input, validityDays }).returning();
     return p;
   }),
 
   update: adminProcedure
-    .input(z.object({ id: z.string().uuid() }).merge(createPackageSchema.partial()))
+    .input(z.object({ id: z.string().uuid() }).merge(createPackageSchema.partial()).extend({ isActive: z.boolean().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
-      await ctx.db.update(packages).set({ ...data, updatedAt: new Date() })
+      const patch: Record<string, unknown> = { ...data, updatedAt: new Date() };
+      if (data.durationValue != null && data.durationUnit != null) {
+        patch.validityDays = derivedValidityDays(data.durationValue, data.durationUnit);
+      }
+      await ctx.db.update(packages).set(patch as any)
         .where(and(eq(packages.id, id), eq(packages.orgId, ctx.orgId)));
       return { ok: true };
     }),

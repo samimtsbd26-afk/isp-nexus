@@ -6,6 +6,12 @@
     # Port 2019 is NOT exposed to the host — internal Docker network only.
     admin 0.0.0.0:2019
     email {$SSL_EMAIL:admin@skynity.org}
+
+    # Disable HTTP/3 (QUIC) — captive portals require TCP-only (MikroTik walled
+    # garden allows TCP:80/443 but blocks UDP:443 which QUIC requires).
+    servers {
+        protocols h1 h2
+    }
 }
 
 admin.skynity.org {

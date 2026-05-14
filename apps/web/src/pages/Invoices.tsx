@@ -1,4 +1,5 @@
 ﻿import { useState } from "react";
+import { trpcDeserializeResultData, trpcEncodeQueryInput } from "../lib/trpc-http";
 import { trpc } from "../lib/trpc";
 import { toast } from "sonner";
 import { Download, RefreshCw } from "lucide-react";
@@ -11,12 +12,13 @@ export default function Invoices() {
   async function downloadPdf(id: string) {
     setDownloading(id);
     try {
-      const input = encodeURIComponent(JSON.stringify({ json: { id } }));
+      const input = trpcEncodeQueryInput({ id });
       const response = await fetch(`/api/trpc/invoice.generatePdf?input=${input}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("isp_access_token")}` },
       });
       const result = await response.json();
-      const pdf = result?.result?.data?.json;
+      const pdf =
+        result?.result?.data !== undefined ? trpcDeserializeResultData<{ base64: string; filename: string }>(result.result.data) : null;
       if (!response.ok || !pdf?.base64) { toast.error("Failed to generate PDF"); return; }
       const blob = new Blob([Uint8Array.from(atob(pdf.base64), (c) => c.codePointAt(0) ?? 0)], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);

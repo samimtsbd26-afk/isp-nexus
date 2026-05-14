@@ -46,5 +46,7 @@ export function joinRouter(routerId: string) {
 
 export function onEvent<K extends keyof SocketEvents>(event: K, handler: (data: SocketEvents[K]) => void) {
   getSocket().on(event as string, handler);
-  return () => getSocket().off(event as string, handler);
+  return () => {
+    getSocket().off(event as string, handler);
+  };
 }

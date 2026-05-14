@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { randomBytes } from "crypto";
-import { and, eq, sql, gte, lte, ne } from "drizzle-orm";
+import { and, eq, sql, gte, lte } from "drizzle-orm";
 import {
   createDb,
   customers,
@@ -16,12 +16,17 @@ import {
 } from "@isp-nexus/db";
 import { env } from "../../lib/env.js";
 import { logger } from "../../lib/logger.js";
-import { decryptText, encryptText } from "../../lib/crypto.js";
-import { getMikroTikClient, type MikroTikApi } from "../mikrotik/client.js";
+import { encryptText, decryptText } from "../../lib/crypto.js";
+import { connectRouter, type MikroTikApi } from "../../lib/mikrotik.js";
 import { ensureHotspotProfile as ensureHotspotProfilePkg, syncHotspotRadiusUser } from "../hotspot/provisioning.js";
 import { nextInvoiceNumber } from "../billing/invoice.js";
+import { formatPackageDurationShort, hotspotPlanComment, packageActivationDurationSeconds, packageLimitUptimeHours } from "@isp-nexus/shared";
 
 let botInstance: Bot | null = null;
+
+function esc(s: string | null | undefined): string {
+  return String(s ?? "").replace(/[_*[\]`]/g, "\\$&");
+}
 const db = createDb(env.DATABASE_URL);
 
 export function getBot(): Bot | null {
@@ -275,11 +280,11 @@ export async function sendOrderNotification(chatId: string, order: any, customer
   const message = [
     `🛒 *New Order*`,
     ``,
-    `Package: ${pkg?.name ?? "N/A"}`,
+    `Package: ${esc(pkg?.name ?? "N/A")}`,
     `Amount: ${order?.amountBdt ?? 0} BDT`,
-    `Method: ${order?.paymentMethod ?? "N/A"}`,
-    `Customer: ${customer?.fullName ?? "N/A"}`,
-    `Phone: ${customer?.phone ?? "N/A"}`,
+    `Method: ${esc(order?.paymentMethod ?? "N/A")}`,
+    `Customer: ${esc(customer?.fullName ?? "N/A")}`,
+    `Phone: ${esc(customer?.phone ?? "N/A")}`,
   ].join("\n");
   try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.error({ err, chatId }, "Failed to send order notification"); }
@@ -290,34 +295,78 @@ export async function sendApprovalNotification(chatId: string, customer: any, pk
   const message = [
     `✅ *Order Approved*`,
     ``,
-    `Customer: ${customer?.fullName ?? "N/A"}`,
-    `Phone: ${customer?.phone ?? "N/A"}`,
-    `Package: ${pkg?.name ?? "N/A"}`,
+    `Customer: ${esc(customer?.fullName ?? "N/A")}`,
+    `Phone: ${esc(customer?.phone ?? "N/A")}`,
+    `Package: ${esc(pkg?.name ?? "N/A")}`,
     `Amount: ৳${pkg?.priceBdt ?? 0}`,
   ].join("\n");
   try { await botInstance.api.sendMessage(chatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.error({ err, chatId }, "Failed to send approval notification"); }
 }
 
+export async function notifyPaymentReceived(data: { name: string; phone: string; amount: number; method: string; trxId?: string; packageName: string; chatId?: string }): Promise<void> {
+  if (!botInstance) return;
+  if (!data.chatId) return;
+  const message = [
+    `💰 *Payment Received*`,
+    ``,
+    `Name: ${esc(data.name)}`,
+    `Phone: ${esc(data.phone)}`,
+    `Package: ${esc(data.packageName)}`,
+    `Amount: ৳${data.amount}`,
+    `Method: ${esc(data.method)}`,
+    data.trxId ? `Trx ID: ${esc(data.trxId)}` : "",
+  ].filter(Boolean).join("\n");
+  try { await botInstance.api.sendMessage(data.chatId, message, { parse_mode: "Markdown" }); }
+  catch (err) { logger.error({ err, chatId: data.chatId }, "Failed to send payment notification"); }
+}
+
+export async function sendNewUserCreatedNotification(
+  chatId: string,
+  payload: { name: string; phone: string; packageName: string },
+): Promise<void> {
+  if (!botInstance) return;
+  const text = [
+    "New User Created",
+    "",
+    `Name: ${payload.name}`,
+    `Package: ${payload.packageName}`,
+    `Phone: ${payload.phone}`,
+    "Status: Pending Approval",
+  ].join("\n");
+  try {
+    await botInstance.api.sendMessage(chatId, text);
+  } catch (err) {
+    logger.error({ err, chatId }, "Failed to send new user created notification");
+  }
+}
+
 export async function sendTrialRequestNotification(
   chatId: string,
   orderId: string,
   customer: { fullName: string; phone: string },
-  pkg: { name: string; validityDays: number },
+  pkg: { name: string; validityDays?: number | null; durationValue?: number | null; durationUnit?: "hour" | "day" | null; isTrial?: boolean | null },
   mac: string,
   ip: string,
   ua: string,
 ): Promise<string | null> {
   if (!botInstance) return null;
   const message = [
+    "New User Created",
+    "",
+    `Name: ${customer.fullName}`,
+    `Package: ${pkg.name}`,
+    `Phone: ${customer.phone}`,
+    "Status: Pending Approval",
+    "",
     `🔥 *নতুন ট্রায়াল রিকোয়েস্ট*`,
     ``,
-    `নাম: ${customer.fullName}`,
-    `ফোন: ${customer.phone}`,
-    `MAC: ${mac || "—"}`,
-    `IP: ${ip || "—"}`,
-    `ডিভাইস: ${ua ? ua.slice(0, 80) : "—"}`,
-    `প্যাকেজ: ${pkg.name} (${pkg.validityDays} দিন)`,
+    `নাম: ${esc(customer.fullName)}`,
+    `ফোন: ${esc(customer.phone)}`,
+    `MAC: ${esc(mac || "—")}`,
+    `IP: ${esc(ip || "—")}`,
+    `ডিভাইস: ${esc(ua ? ua.slice(0, 80) : "—")}`,
+    `প্যাকেজ: ${esc(pkg.name)} (${pkg.isTrial ? "3 ঘন্টা ট্রায়াল" : esc(formatPackageDurationShort(pkg))})`,
     `সময়: ${new Date().toLocaleString("en-BD")}`,
   ].join("\n");
   try {
@@ -352,15 +401,18 @@ async function approveOrderFromTelegram(admin: TelegramAdmin, orderId: string): 
     .where(and(eq(customers.id, o.customerId), eq(customers.orgId, admin.orgId))).limit(1);
   if (!customer?.isActive) throw new Error("Customer is inactive");
 
-  const validityDays = pkg.validityDays ?? 30;
-  const expiresAt = new Date(Date.now() + validityDays * 24 * 60 * 60 * 1000);
+  const trialSeconds = packageActivationDurationSeconds(pkg);
+  const trialHours = packageLimitUptimeHours(pkg);
+  const expiresAt = new Date(Date.now() + trialSeconds * 1000);
+  const planComment = hotspotPlanComment(pkg);
 
   // Restore registration password from order metadata (free trial)
   let subPassword: string;
   let passwordEncrypted: string;
-  if (o.paymentMethod === "free" && o.screenshotUrl) {
+  const rawMeta = o.registrationMeta ?? o.screenshotUrl;
+  if (o.paymentMethod === "free" && rawMeta) {
     try {
-      const meta = JSON.parse(o.screenshotUrl) as { ep?: string };
+      const meta = JSON.parse(rawMeta) as { ep?: string };
       if (typeof meta.ep === "string" && meta.ep.split(":").length === 3) {
         passwordEncrypted = meta.ep;
         subPassword = decryptText(meta.ep);
@@ -379,11 +431,9 @@ async function approveOrderFromTelegram(admin: TelegramAdmin, orderId: string): 
     .where(and(eq(routers.orgId, admin.orgId), eq(routers.isDefault, true), eq(routers.isActive, true))).limit(1);
 
   if (pkg.type !== "static" && r) {
-    const port = r.useSsl ? (r.sslPort ?? 8729) : r.port;
-    let client: Awaited<ReturnType<typeof getMikroTikClient>> | null = null;
+    let client: MikroTikApi | null = null;
     try {
-      const routerPassword = decryptText(r.passwordEncrypted);
-      client = await getMikroTikClient({ host: r.host, port, username: r.username, password: routerPassword, useSsl: r.useSsl });
+      client = await connectRouter(r);
       if (pkg.type === "pppoe") {
         await client.add("/ppp/secret", {
           name: username, password: subPassword,
@@ -396,10 +446,10 @@ async function approveOrderFromTelegram(admin: TelegramAdmin, orderId: string): 
           name: username,
           password: subPassword,
           profile,
-          "limit-uptime": `${validityDays * 24}h`,
-          comment: o.paymentMethod === "free" ? `trial:${o.id}` : o.id,
+          "limit-uptime": `${trialHours}h`,
+          comment: planComment,
         });
-        await syncHotspotRadiusUser(db, username, subPassword, pkg, validityDays * 24 * 60 * 60);
+        await syncHotspotRadiusUser(db, username, subPassword, pkg, trialSeconds);
       }
     } catch (err) {
       logger.error({ err }, "MikroTik provision error in Telegram order approval");
@@ -428,6 +478,20 @@ async function approveOrderFromTelegram(admin: TelegramAdmin, orderId: string): 
   });
 
   logger.info({ orderId: o.id, adminId: admin.id }, "Order approved via Telegram");
+
+  // Push in-app notification to customer
+  const isTrial = o.paymentMethod === "free";
+  import("../notifications/customer.js").then(({ pushCustomerNotification }) => {
+    pushCustomerNotification(
+      admin.orgId,
+      customer.id,
+      isTrial ? "trial_approved" : "payment_approved",
+      isTrial ? "Free Trial Approved!" : "Payment Approved!",
+      isTrial
+        ? `Your free trial for ${pkg.name} has been activated. Expires: ${expiresAt.toLocaleDateString("en-BD")}`
+        : `Your payment for ${pkg.name} (৳${o.amountBdt}) has been approved. Expires: ${expiresAt.toLocaleDateString("en-BD")}`,
+    ).catch(() => {});
+  }).catch(() => {});
 }
 
 async function rejectOrderFromTelegram(admin: TelegramAdmin, orderId: string): Promise<void> {
@@ -435,10 +499,22 @@ async function rejectOrderFromTelegram(admin: TelegramAdmin, orderId: string): P
     .where(and(eq(orders.id, orderId), eq(orders.orgId, admin.orgId))).limit(1);
   if (!o) throw new Error("অর্ডার পাওয়া যায়নি");
   if (o.status !== "pending") throw new Error(`অর্ডারটি ইতোমধ্যে ${o.status} করা হয়েছে`);
+  const [orderFull] = await db.select({ customerId: orders.customerId, orgId: orders.orgId, amountBdt: orders.amountBdt, packageId: orders.packageId })
+    .from(orders).where(eq(orders.id, orderId)).limit(1);
   await db.update(orders).set({
     status: "rejected", reviewedBy: admin.id, reviewedAt: new Date(), updatedAt: new Date(),
   }).where(eq(orders.id, o.id));
   logger.info({ orderId: o.id, adminId: admin.id }, "Order rejected via Telegram");
+  // Notify customer
+  if (orderFull) {
+    import("../notifications/customer.js").then(({ pushCustomerNotification }) => {
+      pushCustomerNotification(
+        orderFull.orgId, orderFull.customerId,
+        "payment_rejected", "Order Rejected",
+        "Your payment order has been rejected. Please contact support if you believe this is an error.",
+      ).catch(() => {});
+    }).catch(() => {});
+  }
 }
 
 export async function sendExpiryAlert(chatId: string, customerName: string, packageName: string, daysLeft: number, portalUrl?: string): Promise<void> {
@@ -448,8 +524,8 @@ export async function sendExpiryAlert(chatId: string, customerName: string, pack
   const lines = [
     `${urgency} *Package Expiry Alert*`,
     ``,
-    `Customer: ${customerName}`,
-    `Package: ${packageName}`,
+    `Customer: ${esc(customerName)}`,
+    `Package: ${esc(packageName)}`,
     `Status: ${timeLabel}`,
   ];
   if (portalUrl) lines.push(`\nRenew: ${portalUrl}`);
@@ -459,7 +535,7 @@ export async function sendExpiryAlert(chatId: string, customerName: string, pack
 
 export async function sendLoginAlert(orgChatId: string, customerName: string, phone: string): Promise<void> {
   if (!botInstance) return;
-  const message = `🔑 *Portal Login*\n\nCustomer: ${customerName}\nPhone: ${phone}\nTime: ${new Date().toLocaleString("en-BD")}`;
+  const message = `🔑 *Portal Login*\n\nCustomer: ${esc(customerName)}\nPhone: ${esc(phone)}\nTime: ${new Date().toLocaleString("en-BD")}`;
   try { await botInstance.api.sendMessage(orgChatId, message, { parse_mode: "Markdown" }); }
   catch (err) { logger.warn({ err }, "Failed to send login alert"); }
 }
@@ -566,11 +642,6 @@ async function getDefaultRouter(orgId: string) {
   return router;
 }
 
-async function connectRouter(router: typeof routers.$inferSelect): Promise<MikroTikApi> {
-  const password = decryptText(router.passwordEncrypted);
-  const port = router.useSsl ? router.sslPort : router.port;
-  return getMikroTikClient({ host: router.host, port, username: router.username, password, useSsl: router.useSsl });
-}
 
 async function findOrCreateTelegramPackage(orgId: string, input: UserCommand) {
   const name = `Telegram ${input.speed} ${input.days}D ${input.devices}DEVICE`;
@@ -621,8 +692,8 @@ async function assertRadiusReady() {
 async function ensureHotspotProfile(client: MikroTikApi, name: string, speed: string, devices: number) {
   const [profile] = await client.print("/ip/hotspot/user/profile", { name });
   const data = { name, "rate-limit": speed, "shared-users": String(devices) };
-  if (profile?.[".id"]) {
-    await client.exec("/ip/hotspot/user/profile", "set", { numbers: profile[".id"], ...data });
+  if (profile?.id) {
+    await client.exec("/ip/hotspot/user/profile", "set", { numbers: profile.id, ...data });
     return;
   }
   await client.add("/ip/hotspot/user/profile", data);
@@ -633,8 +704,8 @@ async function upsertHotspotUser(client: MikroTikApi, username: string, password
   const uptimeHours = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 3_600_000));
   const [user] = await client.print("/ip/hotspot/user", { name: username });
   const data = { name: username, password, profile, "limit-uptime": `${uptimeHours}h`, disabled: disabled ? "yes" : "no", comment };
-  if (user?.[".id"]) {
-    await client.exec("/ip/hotspot/user", "set", { numbers: user[".id"], ...data });
+  if (user?.id) {
+    await client.exec("/ip/hotspot/user", "set", { numbers: user.id, ...data });
     return;
   }
   await client.add("/ip/hotspot/user", data);
@@ -653,9 +724,9 @@ async function setHotspotUserState(orgId: string, username: string, command: "di
   const client = await connectRouter(router);
   try {
     const [user] = await client.print("/ip/hotspot/user", { name: username });
-    if (user?.[".id"]) {
-      if (command === "delete") await client.remove("/ip/hotspot/user", user[".id"]);
-      else await client.exec("/ip/hotspot/user", "set", { numbers: user[".id"], disabled: command === "disable" ? "yes" : "no" });
+    if (user?.id) {
+      if (command === "delete") await client.remove("/ip/hotspot/user", user.id);
+      else await client.exec("/ip/hotspot/user", "set", { numbers: user.id, disabled: command === "disable" ? "yes" : "no" });
     }
   } finally {
     await client.close();

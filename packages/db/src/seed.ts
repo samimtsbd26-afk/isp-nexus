@@ -1,4 +1,5 @@
 import { createDb, organizations, users } from "./index.js";
+import { getCliDatabaseUrl } from "./cli-env.js";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 
@@ -11,7 +12,7 @@ async function hashPassword(password: string): Promise<string> {
 }
 
 async function main() {
-  const db = createDb(process.env.DATABASE_URL!);
+  const db = createDb(getCliDatabaseUrl());
 
   console.log("🌱 Seeding database...");
 
